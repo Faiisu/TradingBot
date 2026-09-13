@@ -1,0 +1,11 @@
+pandas
+numpy
+MetaTrader5
+python-dotenv
+pytest
+matplotlib
+pyarrow
+fastapi
+uvicorn
+psutil
+httpx

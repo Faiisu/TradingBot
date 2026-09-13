@@ -1,0 +1,354 @@
+<title>TradeBot Results Summary</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {
+  --bg: #0b0f14;
+  --surface: #121821;
+  --surface-2: #171f2a;
+  --border: #232c38;
+  --ink: #e8ecf1;
+  --muted: #7c8797;
+  --gold: #d4a544;
+  --gold-dim: #8a713a;
+  --up: #3fb968;
+  --up-dim: #1c3326;
+  --down: #e5484d;
+  --down-dim: #3a1f22;
+  --baseline: #5b6675;
+  --f-ma: #3987e5;
+  --f-macd: #d95926;
+  --f-ema: #199e70;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+  padding: 20px 20px 60px;
+}
+
+.wrap { max-width: 1180px; margin: 0 auto; }
+
+header.page-head {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+h1 { font-size: 20px; font-weight: 700; margin: 0 0 4px; text-wrap: balance; letter-spacing: -0.01em; }
+h1 .accent { color: var(--gold); }
+.subtitle { font-size: 12px; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+.stat { background: var(--surface); padding: 14px 16px; }
+.stat .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.stat .value { font-family: 'IBM Plex Mono', monospace; font-size: 20px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.stat .value.small { font-size: 14px; line-height: 1.4; }
+.stat .value.pos { color: var(--up); }
+
+section.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 16px 20px;
+  margin-bottom: 24px;
+}
+.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 4px; font-weight: 600; }
+.panel .panel-note { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+
+/* --- chart --- */
+.legend { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 14px; font-size: 12px; color: var(--muted); }
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+#chart-wrap { position: relative; }
+svg#chart { width: 100%; height: auto; overflow: visible; }
+.axis-label { fill: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 10px; }
+.group-label { fill: var(--ink); font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; }
+.grid-line { stroke: var(--border); stroke-width: 1; }
+.bar { cursor: pointer; }
+.bar-value { fill: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; }
+#tooltip {
+  position: absolute;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+  white-space: nowrap;
+  z-index: 5;
+}
+
+/* --- tables --- */
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; }
+thead th {
+  text-align: left; color: var(--muted); font-weight: 500; text-transform: uppercase;
+  letter-spacing: 0.04em; font-size: 10.5px; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+tbody td { padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
+tbody tr:hover { background: var(--surface-2); }
+tbody tr.winner { background: var(--up-dim); }
+tbody tr.winner td:first-child { color: var(--up); font-weight: 600; }
+
+.badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 10.5px; font-weight: 600; }
+.badge.mtf-ma { background: rgba(57,135,229,0.15); color: var(--f-ma); }
+.badge.mtf-macd { background: rgba(217,89,38,0.15); color: var(--f-macd); }
+.badge.mtf-ema { background: rgba(25,158,112,0.15); color: var(--f-ema); }
+.badge.single { background: var(--surface-2); color: var(--muted); }
+
+.pos { color: var(--up); } .neg { color: var(--down); }
+
+.dir-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.dir-badge.long { background: var(--up-dim); color: var(--up); }
+.dir-badge.short { background: var(--down-dim); color: var(--down); }
+.dir-badge.flat { background: var(--surface-2); color: var(--muted); }
+
+footer.page-foot {
+  font-size: 12px; color: var(--muted); text-align: center; padding-top: 12px;
+}
+footer.page-foot a { color: var(--gold); text-decoration: none; }
+footer.page-foot a:hover { text-decoration: underline; }
+
+@media (max-width: 480px) {
+  .stats { grid-template-columns: 1fr 1fr; }
+}
+</style>
+
+<div class="wrap">
+  <header class="page-head">
+    <h1>TradeBot <span class="accent">Results Summary</span></h1>
+    <div class="subtitle">XAUUSD (Exness demo) · Common backtest window 2025-04-15 &rarr; 2026-09-11 (514 days, trimmed to M5's available history) · Report generated 2026-09-13</div>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><div class="label">Candidates Tested</div><div class="value">29</div></div>
+    <div class="stat"><div class="label">Timeframes</div><div class="value small">H1 &middot; M30 &middot; M15 &middot; M5</div></div>
+    <div class="stat"><div class="label">Ensemble Size</div><div class="value">25 <span style="color:var(--muted);font-size:13px">/ 29</span></div></div>
+    <div class="stat">
+      <div class="label">Best Performer</div>
+      <div class="value small">macd_12_26_9 (M5)<br>metric 8709.54 &middot; <span style="color:var(--muted);font-size:11px">see caveat below</span></div>
+    </div>
+  </div>
+
+  <section class="panel" style="border-color:var(--gold-dim)">
+    <h2 style="color:var(--gold)">M5 Added — Now on a Fair, Common Window</h2>
+    <div class="panel-note" style="margin-bottom:0">
+      M5 is in the candidate pool, and <code>macd_12_26_9 (M5)</code> tops every other candidate by a wide margin (metric 8709.54). This used to be confounded by an unequal comparison — Exness only retains <strong>514 days</strong> of M5 history vs. ~728 for the other timeframes — so <strong>every timeframe has now been trimmed to that same 514-day window</strong> (2025-04-15 onward) before ranking, everyone judged on identical market conditions. The MACD H1-filter finding held up under the fair window too (metric roughly 2.5x the unfiltered version, same as before). Two things still worth keeping in mind: M5 trades far more often (8,384 trades vs. MACD/M15's 2,850 over the same window) — more exposure to the kind of runaway-compounding-from-leverage pattern this project already had to fix once — and M5 candidates have <strong>no MTF trend filter yet</strong>, that combination hasn't been tested.
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Does the H1 Trend Filter Help?</h2>
+    <div class="panel-note">Performance Metric (return % &divide; max drawdown %) by entry strategy, unfiltered vs. each H1 Trend Filter variant. Log scale — the range spans 8 to 1,929. Hover a bar for exact figures.</div>
+    <div class="legend">
+      <span class="legend-item"><span class="swatch" style="background:var(--baseline)"></span>Unfiltered</span>
+      <span class="legend-item"><span class="swatch" style="background:var(--f-ma)"></span>+ MA Crossover filter</span>
+      <span class="legend-item"><span class="swatch" style="background:var(--f-macd)"></span>+ MACD filter</span>
+      <span class="legend-item"><span class="swatch" style="background:var(--f-ema)"></span>+ EMA(50) slope filter</span>
+    </div>
+    <div id="chart-wrap">
+      <svg id="chart" viewBox="0 0 1100 340"></svg>
+      <div id="tooltip"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Full Ranked Results — All 24 Candidates</h2>
+    <div class="panel-note">Sorted by Performance Metric. Rows in the Ensemble are highlighted (metric &gt; 0). MTF badge shows which H1 filter was applied, if any.</div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>#</th><th>Candidate</th><th>TF</th><th>Filter</th><th>Trades</th><th>Return %</th><th>Max DD %</th><th>Metric</th></tr>
+        </thead>
+        <tbody id="results-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Paper Trading Session (Stopped for the Weekend)</h2>
+    <div class="panel-note">2026-09-13 14:39 &ndash; 15:00 UTC &middot; 3 ticks &middot; 12 members (the Ensemble in place before this MTF backtest ran) &middot; stopped ahead of Sat&ndash;Sun market closure, no trades had completed yet. Restarting will pick up the new 21-member Ensemble automatically.</div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Candidate</th><th>TF</th><th>Equity</th><th>Position</th><th>Entry Price</th></tr></thead>
+        <tbody id="paper-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="page-foot">
+    Every trade behind these numbers: <a href="https://claude.ai/code/artifact/2adaafea-84cd-4516-95b4-57a2e1f4a204">XAUUSD Signal History &rarr;</a>
+  </footer>
+</div>
+
+<script>
+const RESULTS = [
+  {name:"macd_12_26_9", tf:"M5", filter:null, trades:8384, ret:18228.11, dd:2.09, metric:8709.54},
+  {name:"macd_12_26_9", tf:"M15", filter:"MACD", trades:1664, ret:1899.77, dd:1.86, metric:1020.16},
+  {name:"bollinger_breakout_20_2.0", tf:"M5", filter:null, trades:3850, ret:2920.27, dd:3.64, metric:802.15},
+  {name:"macd_12_26_9", tf:"M15", filter:null, trades:2850, ret:2014.86, dd:5.03, metric:400.82},
+  {name:"bollinger_breakout_20_2.0", tf:"M15", filter:null, trades:1317, ret:960.46, dd:2.44, metric:393.00},
+  {name:"macd_12_26_9", tf:"M30", filter:null, trades:1382, ret:1168.49, dd:3.56, metric:327.78},
+  {name:"atr_channel_breakout_20_14_2.0", tf:"M5", filter:null, trades:2384, ret:1045.93, dd:3.58, metric:292.18},
+  {name:"bollinger_breakout_20_2.0", tf:"M30", filter:null, trades:615, ret:520.09, dd:1.98, metric:263.05},
+  {name:"macd_12_26_9", tf:"M15", filter:"EMA slope", trades:1532, ret:625.82, dd:3.32, metric:188.22},
+  {name:"macd_12_26_9", tf:"H1", filter:null, trades:658, ret:586.22, dd:3.64, metric:160.93},
+  {name:"atr_channel_breakout_20_14_2.0", tf:"M15", filter:"MACD", trades:766, ret:357.30, dd:2.33, metric:153.58},
+  {name:"macd_12_26_9", tf:"M15", filter:"MA Crossover", trades:1483, ret:488.38, dd:3.54, metric:138.16},
+  {name:"ma_crossover_20_50", tf:"M15", filter:"MACD", trades:944, ret:582.85, dd:4.28, metric:136.09},
+  {name:"atr_channel_breakout_20_14_2.0", tf:"M15", filter:"EMA slope", trades:636, ret:285.35, dd:2.70, metric:105.83},
+  {name:"atr_channel_breakout_20_14_2.0", tf:"M15", filter:"MA Crossover", trades:501, ret:204.20, dd:2.16, metric:94.45},
+  {name:"atr_channel_breakout_20_14_2.0", tf:"M15", filter:null, trades:835, ret:331.69, dd:3.57, metric:92.88},
+  {name:"bollinger_breakout_20_2.0", tf:"H1", filter:null, trades:324, ret:238.34, dd:3.11, metric:76.74},
+  {name:"atr_channel_breakout_20_14_2.0", tf:"M30", filter:null, trades:422, ret:234.34, dd:4.03, metric:58.11},
+  {name:"atr_channel_breakout_20_14_2.0", tf:"H1", filter:null, trades:225, ret:133.28, dd:3.28, metric:40.62},
+  {name:"ma_crossover_20_50", tf:"M15", filter:"EMA slope", trades:822, ret:125.55, dd:6.78, metric:18.51},
+  {name:"ma_crossover_20_50", tf:"M30", filter:null, trades:611, ret:105.79, dd:8.42, metric:12.57},
+  {name:"ma_crossover_20_50", tf:"M5", filter:null, trades:3934, ret:128.55, dd:10.36, metric:12.41},
+  {name:"ma_crossover_20_50", tf:"M15", filter:"MA Crossover", trades:732, ret:76.61, dd:7.41, metric:10.33},
+  {name:"ma_crossover_20_50", tf:"M15", filter:null, trades:1255, ret:70.86, dd:9.18, metric:7.72},
+  {name:"ma_crossover_20_50", tf:"H1", filter:null, trades:309, ret:63.35, dd:8.45, metric:7.50},
+  {name:"rsi_mean_reversion_14", tf:"H1", filter:null, trades:294, ret:-52.70, dd:53.30, metric:-0.99},
+  {name:"rsi_mean_reversion_14", tf:"M30", filter:null, trades:580, ret:-68.28, dd:68.61, metric:-1.00},
+  {name:"rsi_mean_reversion_14", tf:"M15", filter:null, trades:1062, ret:-73.48, dd:73.72, metric:-1.00},
+  {name:"rsi_mean_reversion_14", tf:"M5", filter:null, trades:3033, ret:-87.87, dd:87.95, metric:-1.00},
+];
+
+const PAPER_MEMBERS = [
+  {name:"ma_crossover_20_50", tf:"H1", equity:416.67, position:null, entry:null},
+  {name:"ma_crossover_20_50", tf:"M30", equity:416.67, position:1, entry:4349.302},
+  {name:"ma_crossover_20_50", tf:"M15", equity:416.67, position:-1, entry:4349.302},
+  {name:"macd_12_26_9", tf:"H1", equity:416.67, position:null, entry:null},
+  {name:"macd_12_26_9", tf:"M30", equity:416.67, position:-1, entry:4349.302},
+  {name:"macd_12_26_9", tf:"M15", equity:416.67, position:-1, entry:4349.302},
+  {name:"bollinger_breakout_20_2.0", tf:"H1", equity:416.67, position:null, entry:null},
+  {name:"bollinger_breakout_20_2.0", tf:"M30", equity:416.67, position:null, entry:null},
+  {name:"bollinger_breakout_20_2.0", tf:"M15", equity:416.67, position:null, entry:null},
+  {name:"atr_channel_breakout_20_14_2.0", tf:"H1", equity:416.67, position:null, entry:null},
+  {name:"atr_channel_breakout_20_14_2.0", tf:"M30", equity:416.67, position:null, entry:null},
+  {name:"atr_channel_breakout_20_14_2.0", tf:"M15", equity:416.67, position:null, entry:null},
+];
+
+function filterBadge(f) {
+  if (!f) return '<span class="badge single">single-TF</span>';
+  const cls = f === "MA Crossover" ? "mtf-ma" : f === "MACD" ? "mtf-macd" : "mtf-ema";
+  return `<span class="badge ${cls}">MTF · ${f}</span>`;
+}
+
+function renderResultsTable() {
+  const tbody = document.getElementById('results-rows');
+  tbody.innerHTML = RESULTS.map((r, i) => {
+    const inEnsemble = r.metric > 0;
+    return `<tr class="${inEnsemble && i < 3 ? 'winner' : ''}">
+      <td>${i + 1}</td>
+      <td>${r.name}</td>
+      <td>${r.tf}${r.tf === 'M5' ? ' <span style="color:var(--gold);font-size:10px" title="Only 514 days of history available, vs. ~728 for other timeframes">&#9888;</span>' : ''}</td>
+      <td>${filterBadge(r.filter)}</td>
+      <td>${r.trades.toLocaleString()}</td>
+      <td class="${r.ret >= 0 ? 'pos' : 'neg'}">${r.ret >= 0 ? '+' : ''}${r.ret.toFixed(2)}</td>
+      <td>${r.dd.toFixed(2)}</td>
+      <td class="${r.metric >= 0 ? 'pos' : 'neg'}" style="font-weight:600">${r.metric.toFixed(2)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPaperTable() {
+  const tbody = document.getElementById('paper-rows');
+  tbody.innerHTML = PAPER_MEMBERS.map(m => {
+    const posLabel = m.position === null ? '<span class="dir-badge flat">flat</span>'
+      : m.position === 1 ? '<span class="dir-badge long">long</span>'
+      : '<span class="dir-badge short">short</span>';
+    return `<tr>
+      <td>${m.name}</td>
+      <td>${m.tf}</td>
+      <td>$${m.equity.toFixed(2)}</td>
+      <td>${posLabel}</td>
+      <td>${m.entry ? m.entry.toFixed(2) : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+// --- chart: grouped bars, log scale ---
+function drawChart() {
+  const groups = [
+    { label: "MA Crossover", bars: RESULTS.filter(r => r.name === "ma_crossover_20_50" && r.tf === "M15") },
+    { label: "MACD", bars: RESULTS.filter(r => r.name === "macd_12_26_9" && r.tf === "M15") },
+    { label: "ATR Channel Breakout", bars: RESULTS.filter(r => r.name === "atr_channel_breakout_20_14_2.0" && r.tf === "M15") },
+  ];
+  const order = [null, "MA Crossover", "MACD", "EMA slope"];
+  const colorFor = f => f === null ? "var(--baseline)" : f === "MA Crossover" ? "var(--f-ma)" : f === "MACD" ? "var(--f-macd)" : "var(--f-ema)";
+
+  const W = 1100, H = 340;
+  const padL = 46, padR = 10, padT = 14, padB = 40;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+
+  const allMetrics = groups.flatMap(g => g.bars.map(b => b.metric));
+  const minLog = Math.log10(Math.min(...allMetrics.map(v => Math.max(v, 1))));
+  const maxLog = Math.log10(Math.max(...allMetrics));
+  const yFor = v => padT + plotH - ((Math.log10(Math.max(v, 1)) - 0) / maxLog) * plotH;
+
+  const gridTicks = [1, 10, 100, 1000];
+  let svg = '';
+  gridTicks.forEach(t => {
+    const y = yFor(t);
+    svg += `<line class="grid-line" x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" />`;
+    svg += `<text class="axis-label" x="${padL - 8}" y="${y + 3}" text-anchor="end">${t}</text>`;
+  });
+
+  const groupW = plotW / groups.length;
+  const barGap = 6;
+  const barW = (groupW - barGap * 5) / 4;
+
+  groups.forEach((g, gi) => {
+    const groupX = padL + gi * groupW;
+    svg += `<text class="group-label" x="${groupX + groupW / 2}" y="${H - 14}" text-anchor="middle">${g.label}</text>`;
+    order.forEach((f, bi) => {
+      const bar = g.bars.find(b => b.filter === f);
+      if (!bar) return;
+      const x = groupX + barGap + bi * (barW + barGap);
+      const y = yFor(bar.metric);
+      const h = padT + plotH - y;
+      const color = colorFor(f);
+      const label = f === null ? "Unfiltered" : `+ ${f} filter`;
+      svg += `<rect class="bar" x="${x}" y="${y}" width="${barW}" height="${Math.max(h, 1)}" rx="3" fill="${color}"
+        data-name="${g.label}" data-filter="${label}" data-metric="${bar.metric}" data-return="${bar.ret}" data-dd="${bar.dd}" />`;
+      svg += `<text class="bar-value" x="${x + barW / 2}" y="${y - 5}" text-anchor="middle">${bar.metric >= 1000 ? (bar.metric/1000).toFixed(1)+'k' : bar.metric.toFixed(0)}</text>`;
+    });
+  });
+
+  document.getElementById('chart').innerHTML = svg;
+
+  const tooltip = document.getElementById('tooltip');
+  const chartWrap = document.getElementById('chart-wrap');
+  document.querySelectorAll('.bar').forEach(bar => {
+    bar.addEventListener('mousemove', (e) => {
+      const rect = chartWrap.getBoundingClientRect();
+      tooltip.style.left = (e.clientX - rect.left + 12) + 'px';
+      tooltip.style.top = (e.clientY - rect.top - 12) + 'px';
+      tooltip.style.opacity = '1';
+      tooltip.innerHTML = `<strong>${bar.dataset.name}</strong><br>${bar.dataset.filter}<br>metric ${parseFloat(bar.dataset.metric).toFixed(2)} &middot; return +${parseFloat(bar.dataset.return).toFixed(1)}% &middot; DD ${parseFloat(bar.dataset.dd).toFixed(2)}%`;
+    });
+    bar.addEventListener('mouseleave', () => { tooltip.style.opacity = '0'; });
+  });
+}
+
+renderResultsTable();
+renderPaperTable();
+drawChart();
+</script>

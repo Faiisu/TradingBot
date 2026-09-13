@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeBot · Paper Trading</title>
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <header class="appbar">
+    <div class="brand">TradeBot <span class="symbol">XAUUSD</span></div>
+    <nav class="tabs" aria-label="Dashboard pages">
+      <a href="/backtest">Backtest</a>
+      <a href="/" aria-current="page">Paper Trading</a>
+    </nav>
+    <div class="appbar-meta">
+      <span class="meta-text" id="updated">Checking for paper trading state…</span>
+    </div>
+  </header>
+
+  <main class="page stack">
+    <section class="panel session" aria-labelledby="session-title">
+      <div class="session-main">
+        <div class="session-status">
+          <h1 class="panel-title" id="session-title">Paper trading</h1>
+          <div class="session-line">
+            <span id="status-pill" class="pill idle">Checking…</span>
+            <span id="session-detail" class="muted"></span>
+          </div>
+          <div id="ensemble-detail" class="session-sub muted"></div>
+        </div>
+        <div class="session-actions">
+          <button class="btn btn-primary" id="start-btn" type="button" hidden>Start paper trading</button>
+          <button class="btn btn-danger" id="stop-btn" type="button" hidden>Stop</button>
+        </div>
+      </div>
+      <div class="session-error" id="action-error" role="alert" hidden></div>
+      <details class="session-log" id="log-panel" hidden>
+        <summary>Process log (last lines)</summary>
+        <pre id="log-tail"></pre>
+      </details>
+    </section>
+
+    <div class="panel empty" id="no-state" hidden>
+      <strong>Paper trading hasn't written any state yet.</strong>
+      Press Start — members appear here as soon as the session connects to MT5.
+    </div>
+
+    <div class="stack" id="content" hidden>
+      <div class="stats" id="stats"></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Total return</h2>
+          <span class="panel-note">All members combined, one point per loop tick · hover for detail</span>
+        </div>
+        <div class="panel-body"><div class="chart" id="chart"></div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Ensemble members</h2>
+          <span class="panel-note">Entry times are MT5 broker server time</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Candidate</th><th>TF</th><th class="r">Equity</th><th class="r">Return</th>
+                <th>Position</th><th class="r">Entry</th><th class="r">Stop</th><th class="r">Unrealized</th><th class="r">Trades</th>
+              </tr>
+            </thead>
+            <tbody id="members"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Recent closed trades</h2>
+          <span class="panel-note" id="trades-note"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Candidate</th><th>Call</th><th>Entry time</th><th class="r">Entry</th><th>Exit time</th><th class="r">Exit</th><th class="r">P&amp;L</th><th>Exit reason</th></tr>
+            </thead>
+            <tbody id="trades"></tbody>
+          </table>
+          <div class="empty" id="trades-empty" hidden><strong>No trades have closed yet.</strong>Open positions show in the table above.</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/assets/app.js"></script>
+  <script src="/assets/paper.js"></script>
+</body>
+</html>

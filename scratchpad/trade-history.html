@@ -1,0 +1,488 @@
+<title>XAUUSD Signal History</title>
+<style>
+/* Deliberate single-world design: a dark trading-terminal screen, like the MT5 terminal this data
+   came from. Committing to one visual world (see artifact-design guidance) rather than dual-theming —
+   background and every color are painted explicitly so the page holds regardless of host theme. */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {
+  --bg: #0b0f14;
+  --surface: #121821;
+  --surface-2: #171f2a;
+  --border: #232c38;
+  --ink: #e8ecf1;
+  --muted: #7c8797;
+  --gold: #d4a544;
+  --gold-dim: #8a713a;
+  --up: #3fb968;
+  --up-dim: #1c3326;
+  --down: #e5484d;
+  --down-dim: #3a1f22;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+  padding: 20px 20px 60px;
+}
+
+.wrap { max-width: 1180px; margin: 0 auto; }
+
+header.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0;
+  text-wrap: balance;
+  letter-spacing: -0.01em;
+}
+h1 .accent { color: var(--gold); }
+
+.subtitle {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+label.field-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 4px;
+  display: block;
+}
+
+select, input[type="search"] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  outline: none;
+}
+select:focus, input:focus, button:focus {
+  border-color: var(--gold-dim);
+  box-shadow: 0 0 0 2px rgba(212,165,68,0.18);
+}
+
+#candidate-select { min-width: 260px; }
+
+.control-group { display: flex; flex-direction: column; }
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+.stat {
+  background: var(--surface);
+  padding: 14px 16px;
+}
+.stat .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.stat .value {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 22px;
+  font-weight: 600;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.stat .value.pos { color: var(--up); }
+.stat .value.neg { color: var(--down); }
+
+section.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+.panel h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+
+canvas#chart { width: 100%; height: 140px; display: block; }
+
+.table-controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+#search { width: 220px; }
+
+.table-scroll { overflow-x: auto; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12.5px;
+}
+thead th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+tbody td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+tbody tr:hover { background: var(--surface-2); }
+
+.dir-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.dir-badge.long { background: var(--up-dim); color: var(--up); }
+.dir-badge.short { background: var(--down-dim); color: var(--down); }
+
+.pnl.pos { color: var(--up); }
+.pnl.neg { color: var(--down); }
+
+.reason {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  font-family: 'IBM Plex Mono', monospace;
+}
+.pager-buttons { display: flex; gap: 6px; }
+.pager button {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.pager button:disabled { opacity: 0.35; cursor: default; }
+.pager button:not(:disabled):hover { border-color: var(--gold-dim); }
+
+.empty-state {
+  padding: 40px 0;
+  text-align: center;
+  color: var(--muted);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+}
+
+@media (max-width: 480px) {
+  #candidate-select { min-width: 0; width: 100%; }
+  .controls { flex-direction: column; align-items: stretch; }
+}
+</style>
+
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>XAUUSD <span class="accent">Signal History</span></h1>
+      <div class="subtitle" id="data-range">loading trade history...</div>
+    </div>
+  </header>
+
+  <div class="controls">
+    <div class="control-group">
+      <label class="field-label" for="candidate-select">Strategy Candidate</label>
+      <select id="candidate-select"></select>
+    </div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <section class="panel">
+    <h2>Cumulative P&amp;L — trade by trade</h2>
+    <canvas id="chart" width="1100" height="140"></canvas>
+  </section>
+
+  <section class="panel">
+    <h2>Trade-by-Trade History</h2>
+    <div class="table-controls">
+      <div class="control-group">
+        <label class="field-label" for="search">Search date</label>
+        <input type="search" id="search" placeholder="e.g. 2025-03">
+      </div>
+      <div class="control-group">
+        <label class="field-label" for="dir-filter">Direction</label>
+        <select id="dir-filter">
+          <option value="all">All</option>
+          <option value="1">Long (up call)</option>
+          <option value="-1">Short (down call)</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label class="field-label" for="reason-filter">Exit reason</label>
+        <select id="reason-filter">
+          <option value="all">All</option>
+          <option value="signal_change">Signal change</option>
+          <option value="stop_loss">Stop loss</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Call</th>
+            <th>Entry Time</th>
+            <th>Entry</th>
+            <th>Exit Time</th>
+            <th>Exit</th>
+            <th>P&amp;L</th>
+            <th>Exit Reason</th>
+          </tr>
+        </thead>
+        <tbody id="trade-rows"></tbody>
+      </table>
+      <div class="empty-state" id="empty-state" hidden>No trades match this filter.</div>
+    </div>
+    <div class="pager">
+      <span id="page-info">-</span>
+      <div class="pager-buttons">
+        <button id="prev-page">&larr; Prev</button>
+        <button id="next-page">Next &rarr;</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+const PAGE_SIZE = 50;
+let history = {};
+let candidateKeys = [];
+let currentTrades = [];
+let filteredTrades = [];
+let page = 0;
+
+function fmtPct(v) {
+  const cls = v >= 0 ? 'pos' : 'neg';
+  const sign = v >= 0 ? '+' : '';
+  return `<span class="pnl ${cls}">${sign}${v.toFixed(3)}%</span>`;
+}
+
+function fmtLabel(key) {
+  const [name, tf] = key.split('__');
+  return `${name} (${tf})`;
+}
+
+function computeStats(trades) {
+  const total = trades.length;
+  const wins = trades.filter(t => t.pnl_pct > 0).length;
+  const totalPnl = trades.reduce((sum, t) => sum + t.pnl_pct, 0);
+  const longs = trades.filter(t => t.direction === 1).length;
+  const shorts = total - longs;
+  const winRate = total ? (wins / total * 100) : 0;
+  return { total, winRate, totalPnl, longs, shorts };
+}
+
+function renderStats(trades) {
+  const s = computeStats(trades);
+  const el = document.getElementById('stats');
+  el.innerHTML = `
+    <div class="stat"><div class="label">Total Calls</div><div class="value">${s.total.toLocaleString()}</div></div>
+    <div class="stat"><div class="label">Win Rate</div><div class="value">${s.winRate.toFixed(1)}%</div></div>
+    <div class="stat"><div class="label">Sum of P&amp;L</div><div class="value ${s.totalPnl >= 0 ? 'pos' : 'neg'}">${s.totalPnl >= 0 ? '+' : ''}${s.totalPnl.toFixed(1)}%</div></div>
+    <div class="stat"><div class="label">Up Calls (Long)</div><div class="value" style="color:var(--up)">${s.longs.toLocaleString()}</div></div>
+    <div class="stat"><div class="label">Down Calls (Short)</div><div class="value" style="color:var(--down)">${s.shorts.toLocaleString()}</div></div>
+  `;
+}
+
+function drawChart(trades) {
+  const canvas = document.getElementById('chart');
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 1100;
+  const cssH = 140;
+  canvas.width = cssW * dpr;
+  canvas.height = cssH * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  if (trades.length < 2) {
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted');
+    ctx.font = '12px IBM Plex Mono';
+    ctx.fillText('Not enough trades to chart', 10, cssH / 2);
+    return;
+  }
+
+  let cum = 0;
+  const points = trades.map(t => { cum += t.pnl_pct; return cum; });
+  const min = Math.min(0, ...points);
+  const max = Math.max(0, ...points);
+  const range = (max - min) || 1;
+  const padTop = 10, padBottom = 10;
+
+  const zeroY = padTop + (max - 0) / range * (cssH - padTop - padBottom);
+  ctx.strokeStyle = '#232c38';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, zeroY);
+  ctx.lineTo(cssW, zeroY);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.strokeStyle = '#d4a544';
+  ctx.lineWidth = 1.75;
+  points.forEach((v, i) => {
+    const x = (i / (points.length - 1)) * cssW;
+    const y = padTop + (max - v) / range * (cssH - padTop - padBottom);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  const lastY = padTop + (max - points[points.length - 1]) / range * (cssH - padTop - padBottom);
+  ctx.fillStyle = points[points.length - 1] >= 0 ? '#3fb968' : '#e5484d';
+  ctx.beginPath();
+  ctx.arc(cssW - 3, lastY, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function applyFilters() {
+  const search = document.getElementById('search').value.trim();
+  const dir = document.getElementById('dir-filter').value;
+  const reason = document.getElementById('reason-filter').value;
+
+  filteredTrades = currentTrades.filter(t => {
+    if (search && !t.entry_time.includes(search) && !t.exit_time.includes(search)) return false;
+    if (dir !== 'all' && String(t.direction) !== dir) return false;
+    if (reason !== 'all' && t.exit_reason !== reason) return false;
+    return true;
+  });
+  page = 0;
+  renderTable();
+}
+
+function renderTable() {
+  const tbody = document.getElementById('trade-rows');
+  const emptyState = document.getElementById('empty-state');
+  const totalPages = Math.max(1, Math.ceil(filteredTrades.length / PAGE_SIZE));
+  page = Math.min(page, totalPages - 1);
+
+  const slice = filteredTrades.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  if (slice.length === 0) {
+    tbody.innerHTML = '';
+    emptyState.hidden = false;
+  } else {
+    emptyState.hidden = true;
+    tbody.innerHTML = slice.map((t, i) => {
+      const idx = page * PAGE_SIZE + i + 1;
+      const dirLabel = t.direction === 1 ? 'long' : 'short';
+      const dirText = t.direction === 1 ? 'UP' : 'DOWN';
+      return `<tr>
+        <td>${idx}</td>
+        <td><span class="dir-badge ${dirLabel}">${dirText}</span></td>
+        <td>${t.entry_time}</td>
+        <td>${t.entry_price.toFixed(2)}</td>
+        <td>${t.exit_time}</td>
+        <td>${t.exit_price.toFixed(2)}</td>
+        <td>${fmtPct(t.pnl_pct)}</td>
+        <td class="reason">${t.exit_reason === 'stop_loss' ? 'Stop loss' : 'Signal change'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  document.getElementById('page-info').textContent =
+    `${filteredTrades.length.toLocaleString()} calls — page ${page + 1} of ${totalPages}`;
+  document.getElementById('prev-page').disabled = page === 0;
+  document.getElementById('next-page').disabled = page >= totalPages - 1;
+}
+
+function selectCandidate(key) {
+  currentTrades = history[key].trades;
+  renderStats(currentTrades);
+  drawChart(currentTrades);
+  applyFilters();
+}
+
+async function init() {
+  const res = await fetch('trade_history.json');
+  history = await res.json();
+  candidateKeys = Object.keys(history);
+
+  const select = document.getElementById('candidate-select');
+  select.innerHTML = candidateKeys.map(k => `<option value="${k}">${fmtLabel(k)}</option>`).join('');
+  select.addEventListener('change', () => selectCandidate(select.value));
+
+  document.getElementById('search').addEventListener('input', applyFilters);
+  document.getElementById('dir-filter').addEventListener('change', applyFilters);
+  document.getElementById('reason-filter').addEventListener('change', applyFilters);
+  document.getElementById('prev-page').addEventListener('click', () => { page--; renderTable(); });
+  document.getElementById('next-page').addEventListener('click', () => { page++; renderTable(); });
+
+  const allTrades = Object.values(history).flatMap(h => h.trades);
+  const totalTrades = allTrades.length;
+  document.getElementById('data-range').textContent =
+    `${candidateKeys.length} candidates · ${totalTrades.toLocaleString()} total calls · real XAUUSD (Exness), 2024–09 → 2026–09`;
+
+  const preferred = candidateKeys.find(k => k.startsWith('macd_12_26_9__M15')) || candidateKeys[0];
+  select.value = preferred;
+  selectCandidate(preferred);
+
+  window.addEventListener('resize', () => drawChart(currentTrades));
+}
+
+init();
+</script>

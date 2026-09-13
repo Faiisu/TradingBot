@@ -1,0 +1,69 @@
+# TradeBot
+
+An automated trading system for Gold (XAUUSD), starting with strategy research (backtesting) and paper trading before any real-money execution.
+
+## Language
+
+**Instrument**:
+The single tradable symbol this system targets: XAUUSD (Gold vs. US Dollar), traded as a CFD/forex-style instrument via MetaTrader 5.
+_Avoid_: Gold, ticker, symbol (when ambiguous)
+
+**Trading Platform**:
+MetaTrader 5 (MT5) — the terminal application and Python API (`MetaTrader5` package) used for both historical price data and order execution. Requires a running, logged-in MT5 terminal.
+_Avoid_: broker (the platform is distinct from the broker account connected to it)
+
+**Rule Set**:
+One specific trading logic (e.g. MACD 12/26/9, Donchian breakout) with a single fixed set of default parameters, deciding at each bar close whether to be long, short or flat. Every Rule Set trades both directions and exits only by changing that state or by the shared Risk Controls. A Rule Set is not tested on its own — it becomes one Strategy Candidate per Timeframe.
+_Avoid_: strategy, indicator (an indicator is an input to a Rule Set, not the Rule Set itself), setup
+
+**Strategy Candidate**:
+One specific, fully-defined signal-generating unit evaluated against all others before any one is trusted. Two shapes exist: a **Single-Timeframe Candidate** is a `(rule set, Timeframe)` pair (e.g. "50/200 MA crossover on H1"); an **MTF Candidate** (see below) is a `(rule set, Entry Timeframe, Trend Filter)` triple. Changing any part of either shape produces a distinct Strategy Candidate.
+_Avoid_: strategy (when referring to the general concept vs. a specific candidate), algorithm, bot logic
+
+**MTF Candidate**:
+A Strategy Candidate that only takes a rule set's entry signal on its Entry Timeframe when a Trend Filter computed on a higher Timeframe agrees with that signal's direction (e.g. only take an M15 MACD long entry when the H1 Trend Filter also says "up"). Distinct from a Single-Timeframe Candidate, which ignores every timeframe but its own.
+_Avoid_: multi-timeframe strategy (too vague — doesn't say which timeframe does what)
+
+**Trend Filter**:
+An indicator computed on a higher Timeframe than an MTF Candidate's Entry Timeframe, reduced to a single up/down direction. Three Trend Filter variants are evaluated as separate MTF Candidates: MA Crossover state, EMA(50) slope, and MACD state — the Performance Metric decides which filter is best, rather than that being fixed in advance.
+_Avoid_: confirmation, signal (a Trend Filter gates a candidate's entries, it never produces a trade by itself)
+
+**Entry Timeframe**:
+The Timeframe an MTF Candidate actually trades on — where entries, stops, and exits are all evaluated (H1 filters, M15 enters, in the current Trend Filter design).
+_Avoid_: lower timeframe, execution timeframe
+
+**Ensemble**:
+The output of Phase 1 strategy evaluation: every Strategy Candidate that clears a minimum Performance Metric bar (not a fixed count) enters the Ensemble. Each member runs independently and simultaneously, trading an equal slice of account capital. Candidates are not blended into a single signal — they can hold conflicting positions at the same time.
+_Avoid_: portfolio (ambiguous with account/position portfolio), combined strategy, voting
+
+**Performance Metric**:
+The measure used to rank Strategy Candidates: return % adjusted/penalized by max drawdown, not raw return % alone. A candidate with a smaller drawdown beats one with a larger raw return but a larger drawdown.
+_Avoid_: score, results, % output
+
+**Risk Controls**:
+Position sizing and stop-loss rules applied uniformly to every Strategy Candidate during Backtest and Paper Trading, so Performance Metric comparisons reflect risk-adjusted trading rather than raw signal accuracy.
+_Avoid_: money management, risk management (used too loosely elsewhere)
+
+**Broker**:
+The financial institution providing the MT5 account/server that the Trading Platform connects to. This project uses Exness.
+_Avoid_: platform (see Trading Platform, which is distinct)
+
+**Timeframe**:
+The candle interval a Strategy Candidate trades on: H1, 30m, 15m, or 5m. Phase 1 evaluates candidates across multiple Timeframes rather than committing to one upfront.
+_Avoid_: period, interval, resolution
+
+**Backtest**:
+Running a Strategy Candidate against historical XAUUSD price data to simulate trades and measure performance. No live connection, no account, no real-time data.
+_Avoid_: simulation (too broad), test (too broad)
+
+**Paper Trading**:
+Running a Strategy Candidate against live/streaming XAUUSD prices with simulated (non-real-money) order execution. Distinct from Backtest in that it uses real-time data and tests real-time behavior (latency, slippage assumptions, live data gaps).
+_Avoid_: demo trading, simulated trading, sandbox trading
+
+**Live Trading**:
+Real-money execution against a real account. Explicitly out of scope for Phase 1 of this project.
+_Avoid_: production trading, real trading
+
+**Phase 1**:
+The current scope of the project: Backtest and Paper Trading only, no Live Trading. Connects exclusively to a dedicated Exness demo account — the user's existing live account is never referenced in code or config until a future, not-yet-defined phase covers the transition to Live Trading.
+_Avoid_: MVP, v1 (too generic — this project uses "Phase 1" specifically to mean "no real money")

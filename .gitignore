@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/cache/
+data/ensemble.json
+.pytest_cache/
+*.egg-info/
+data/trade_history.json
+data/backtest_results.json
+data/paper_state.json
+data/paper_trading.pid
+data/paper_trading.stop
+data/paper_trading.log

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeBot · Backtest Results</title>
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <header class="appbar">
+    <div class="brand">TradeBot <span class="symbol">XAUUSD</span></div>
+    <nav class="tabs" aria-label="Dashboard pages">
+      <a href="/backtest" aria-current="page">Backtest</a>
+      <a href="/">Paper Trading</a>
+    </nav>
+    <div class="appbar-meta">
+      <span class="meta-text" id="run-meta">Loading results…</span>
+      <button class="btn" id="reload" type="button">Reload</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="md" id="md" hidden>
+      <aside class="panel sidebar" aria-label="Strategy candidates">
+        <div class="panel-head">
+          <h2 class="panel-title">Candidates</h2>
+          <span class="panel-note" id="cand-count"></span>
+        </div>
+        <div class="panel-body">
+          <div class="toolbar">
+            <div class="field">
+              <label for="tf-filter">Timeframe</label>
+              <select id="tf-filter">
+                <option value="all">All</option>
+                <option value="H1">H1</option>
+                <option value="M30">M30</option>
+                <option value="M15">M15</option>
+                <option value="M5">M5</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="kind-filter">Type</label>
+              <select id="kind-filter">
+                <option value="all">All</option>
+                <option value="single">Single timeframe</option>
+                <option value="mtf">MTF filtered</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <ul class="cand-list" id="cand-list" role="listbox" aria-label="Candidates ranked by performance metric"></ul>
+      </aside>
+
+      <section class="stack" aria-live="polite">
+        <div class="detail-head">
+          <div>
+            <h1 class="detail-title" id="detail-title"></h1>
+            <div class="detail-id" id="detail-id"></div>
+          </div>
+          <div class="detail-tags" id="detail-tags"></div>
+        </div>
+
+        <div class="stats" id="detail-stats"></div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2 class="panel-title">Equity curve</h2>
+            <span class="panel-note">Compounded return after each closed trade · hover for detail</span>
+          </div>
+          <div class="panel-body"><div class="chart" id="chart"></div></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2 class="panel-title">Long / short history</h2>
+            <span class="panel-note">Times are MT5 broker server time</span>
+          </div>
+          <div class="panel-body">
+            <div class="toolbar">
+              <div class="field">
+                <span class="field-label" id="dir-label">Direction</span>
+                <div class="segmented" role="group" aria-labelledby="dir-label">
+                  <button type="button" data-dir="all" aria-pressed="true">All</button>
+                  <button type="button" data-dir="1" aria-pressed="false">Long</button>
+                  <button type="button" data-dir="-1" aria-pressed="false">Short</button>
+                </div>
+              </div>
+              <div class="field">
+                <label for="reason-filter">Exit reason</label>
+                <select id="reason-filter">
+                  <option value="all">All</option>
+                  <option value="signal_change">Signal change</option>
+                  <option value="stop_loss">Stop loss</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="date-search">Date</label>
+                <input type="search" id="date-search" placeholder="e.g. 2026-03" autocomplete="off">
+              </div>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th class="r">#</th><th>Call</th><th>Entry time</th><th class="r">Entry</th>
+                  <th>Exit time</th><th class="r">Exit</th><th class="r">P&amp;L</th><th>Exit reason</th>
+                </tr>
+              </thead>
+              <tbody id="trade-rows"></tbody>
+            </table>
+            <div class="empty" id="trades-empty" hidden><strong>No trades match these filters.</strong>Clear the date or change direction.</div>
+          </div>
+          <div class="pager">
+            <span id="page-info"></span>
+            <div class="pager-buttons">
+              <button class="btn" id="prev-page" type="button">Previous</button>
+              <button class="btn" id="next-page" type="button">Next</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="panel empty" id="no-results" hidden>
+      <strong>No backtest results yet.</strong>
+      Run <code>scripts/run_backtest.py</code>, then press Reload.
+    </div>
+  </main>
+
+  <script src="/assets/app.js"></script>
+  <script src="/assets/backtest.js"></script>
+</body>
+</html>
