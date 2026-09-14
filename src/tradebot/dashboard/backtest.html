@@ -20,6 +20,25 @@
   </header>
 
   <main class="page">
+    <section class="panel" id="wfv-panel" hidden>
+      <div class="panel-head">
+        <h2 class="panel-title">Walk-Forward Validation</h2>
+        <span class="panel-note">Ensemble chosen from each Selection Window, scored only on the Test Window after it — out-of-sample, not in-sample</span>
+      </div>
+      <div class="panel-body">
+        <div class="stats" id="wfv-stats"></div>
+      </div>
+      <div class="panel-body"><div class="chart" id="wfv-chart"></div></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th class="r">#</th><th>Test window</th><th class="r">Return</th><th class="r">Members</th><th>Ensemble chosen</th></tr>
+          </thead>
+          <tbody id="wfv-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
     <div class="md" id="md" hidden>
       <aside class="panel sidebar" aria-label="Strategy candidates">
         <div class="panel-head">

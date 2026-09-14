@@ -12,6 +12,7 @@
     reason: 'all',
     date: '',
     page: 0,
+    walkForward: null,
   };
 
   const keyOf = (c) => `${c.candidate_name}__${c.timeframe}`;
@@ -36,6 +37,8 @@
         .sort((a, b) => b.performance_metric - a.performance_metric)
         .map((c, i) => ({ ...c, rank: i + 1 }));
       renderRunMeta(payload);
+      state.walkForward = payload.walk_forward || null;
+      renderWalkForward();
 
       const hasResults = state.candidates.length > 0;
       $('md').hidden = !hasResults;
@@ -62,6 +65,46 @@
     const dataSpan = payload.window_start ? ` · data ${payload.window_start.slice(0, 10)} → ${payload.window_end.slice(0, 10)}` : '';
     meta.textContent = `Backtest ran ${relativeTime(payload.generated_at)}${dataSpan}`;
     meta.title = `Run at ${new Date(payload.generated_at).toLocaleString()}`;
+  }
+
+  function renderWalkForward() {
+    const wfv = state.walkForward;
+    $('wfv-panel').hidden = !wfv;
+    if (!wfv) return;
+
+    const totalReturnPct = (wfv.equity_curve.length
+      ? (wfv.equity_curve[wfv.equity_curve.length - 1].equity / wfv.equity_curve[0].equity - 1) * 100
+      : 0);
+
+    $('wfv-stats').innerHTML = [
+      ['Status', wfv.passed ? '<span class="pill good">Passed</span>' : '<span class="pill bad">Failed</span>', 'out-of-sample Test Windows only'],
+      ['Out-of-sample metric', `<span class="${signClass(wfv.performance_metric)}">${num(wfv.performance_metric)}</span>`, `threshold to pass is > 0`],
+      ['Test windows', num(wfv.windows.length, 0), '180d Selection / 60d Test, anchored'],
+      ['Out-of-sample return', `<span class="${signClass(totalReturnPct)}">${pct(totalReturnPct)}</span>`, 'compounded across windows'],
+    ]
+      .map(([label, value, sub]) => `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value">${value}</div><div class="stat-sub">${sub}</div></div>`)
+      .join('');
+
+    const points = wfv.equity_curve.map((p) => ({ y: (p.equity - 1) * 100, label: p.date.slice(0, 10), point: p }));
+    lineChart($('wfv-chart'), points, {
+      formatY: (v) => `${num(v, Math.abs(v) >= 100 ? 0 : 1)}%`,
+      tooltip: (p) => `
+        <div class="muted">${esc(p.point.date.slice(0, 10))}</div>
+        <div>equity <span class="${signClass(p.y)}">${pct(p.y)}</span></div>`,
+    });
+
+    $('wfv-rows').innerHTML = wfv.windows
+      .map((w) => {
+        const members = w.members.map((m) => `${ruleSetLabel(m.candidate_name)} (${m.timeframe})`).join(', ') || '<span class="muted">none qualified</span>';
+        return `<tr>
+          <td class="num r muted">${w.index + 1}</td>
+          <td>${esc(w.test_start.slice(0, 10))} → ${esc(w.test_end.slice(0, 10))}</td>
+          <td class="num r ${signClass(w.return_pct)}">${pct(w.return_pct)}</td>
+          <td class="num r">${num(w.members.length, 0)}</td>
+          <td>${members}</td>
+        </tr>`;
+      })
+      .join('');
   }
 
   function renderList() {

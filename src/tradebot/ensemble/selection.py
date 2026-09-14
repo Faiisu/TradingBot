@@ -4,6 +4,7 @@ from pathlib import Path
 
 from tradebot.backtest.result import BacktestResult
 from tradebot.metrics.performance import ENSEMBLE_METRIC_THRESHOLD, performance_metric
+from tradebot.strategies.base import StrategyCandidate, candidate_rule_set_key
 
 
 @dataclass(frozen=True)
@@ -19,16 +20,27 @@ class Ensemble:
     members: list[EnsembleMember]
 
 
-def select_ensemble(results: list[BacktestResult], threshold: float = ENSEMBLE_METRIC_THRESHOLD) -> Ensemble:
-    qualifying = [
-        (result, performance_metric(result.equity_curve))
-        for result in results
-        if performance_metric(result.equity_curve) > threshold
-    ]
+def select_ensemble(
+    candidates_and_results: list[tuple[StrategyCandidate, BacktestResult]],
+    threshold: float = ENSEMBLE_METRIC_THRESHOLD,
+) -> Ensemble:
+    """Every qualifying candidate (Performance Metric above threshold) joins the Ensemble, except that
+    at most one member is admitted per (Rule Set, Entry Timeframe): among an unfiltered candidate and
+    its Trend/Market-Filtered variants, only the best Performance Metric survives (see CONTEXT.md's
+    Ensemble entry, and ADR 0002 — this same rule is what Walk-Forward Validation judges)."""
+    scored = [(candidate, result, performance_metric(result.equity_curve)) for candidate, result in candidates_and_results]
+    qualifying = [(candidate, result, metric) for candidate, result, metric in scored if metric > threshold]
     if not qualifying:
         return Ensemble(members=[])
 
-    capital_fraction = 1.0 / len(qualifying)
+    best_per_pair: dict[tuple[str, str], tuple] = {}
+    for candidate, result, metric in qualifying:
+        key = candidate_rule_set_key(candidate)
+        if key not in best_per_pair or metric > best_per_pair[key][2]:
+            best_per_pair[key] = (candidate, result, metric)
+
+    selected = list(best_per_pair.values())
+    capital_fraction = 1.0 / len(selected)
     members = [
         EnsembleMember(
             candidate_name=result.candidate_name,
@@ -36,7 +48,7 @@ def select_ensemble(results: list[BacktestResult], threshold: float = ENSEMBLE_M
             performance_metric=metric,
             capital_fraction=capital_fraction,
         )
-        for result, metric in qualifying
+        for _candidate, result, metric in selected
     ]
     return Ensemble(members=members)
 

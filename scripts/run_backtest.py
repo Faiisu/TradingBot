@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from tradebot.backtest.engine import BacktestEngine
 from tradebot.backtest.persistence import save_backtest_results
 from tradebot.backtest.result import BacktestResult
+from tradebot.backtest.walk_forward import run_walk_forward
 from tradebot.data.cache import load_ohlcv, trim_to_common_window
 from tradebot.ensemble.selection import save_ensemble, select_ensemble
 from tradebot.metrics.drawdown import max_drawdown_pct
@@ -32,8 +33,9 @@ def run() -> None:
 
     ohlcv_by_timeframe = trim_to_common_window({tf: load_ohlcv(tf, cache_dir=CACHE_DIR) for tf in TIMEFRAMES})
 
+    candidates = build_candidates()
     candidates_and_results: list[tuple] = []
-    for candidate in build_candidates():
+    for candidate in candidates:
         ohlcv = ohlcv_by_timeframe[candidate.timeframe]
         supporting = resolve_supporting_data(candidate, ohlcv_by_timeframe)
         candidates_and_results.append((candidate, engine.run(candidate, ohlcv, supporting)))
@@ -50,7 +52,7 @@ def run() -> None:
             f"{performance_metric(result.equity_curve):>8.2f}"
         )
 
-    ensemble = select_ensemble(results)
+    ensemble = select_ensemble(candidates_and_results)
     print(f"\nEnsemble: {len(ensemble.members)} member(s), equal capital split")
     for member in ensemble.members:
         print(
@@ -62,11 +64,25 @@ def run() -> None:
     save_ensemble(ensemble, ensemble_path)
     print(f"\nEnsemble saved to {ensemble_path} (used by scripts/run_paper_trading.py)")
 
+    print("\nRunning Walk-Forward Validation (anchored, 180d Selection / 60d Test windows)...")
+    walk_forward = run_walk_forward(candidates, ohlcv_by_timeframe, engine)
+    print(f"Walk-Forward Validation: {len(walk_forward.windows)} Test Window(s), "
+          f"out-of-sample metric={walk_forward.performance_metric:.2f}, "
+          f"{'PASSED' if walk_forward.passed else 'FAILED'}")
+    for outcome in walk_forward.windows:
+        member_names = ", ".join(m.candidate_name for m in outcome.members) or "(no qualifying candidates)"
+        print(
+            f"  window {outcome.bounds.index}: test {outcome.bounds.test_start.date()} -> "
+            f"{outcome.bounds.test_end.date()}, return={outcome.return_pct:>8.2f}%, "
+            f"{len(outcome.members)} member(s): {member_names}"
+        )
+
     results_path = CACHE_DIR.parent / "backtest_results.json"
     window_start = max(df.index.min() for df in ohlcv_by_timeframe.values())
     window_end = min(df.index.max() for df in ohlcv_by_timeframe.values())
-    save_backtest_results(candidates_and_results, results_path, window_start, window_end)
-    print(f"Full results (incl. trade-by-trade history) saved to {results_path} (used by the dashboard's /backtest page)")
+    save_backtest_results(candidates_and_results, results_path, window_start, window_end, walk_forward)
+    print(f"\nFull results (incl. trade-by-trade history + Walk-Forward Validation) saved to {results_path} "
+          f"(used by the dashboard's /backtest page)")
 
 
 if __name__ == "__main__":

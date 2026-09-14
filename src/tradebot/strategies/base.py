@@ -61,6 +61,15 @@ def resolve_supporting_data(
     return resolved
 
 
+def candidate_rule_set_key(candidate: StrategyCandidate) -> tuple[str, str]:
+    """Groups a Strategy Candidate by (Rule Set, Entry Timeframe), ignoring any Trend/Market Filter —
+    an MtfCandidate and its unfiltered counterpart share this key with each other (via its
+    entry_strategy), since Ensemble selection admits at most one variant of a given Rule Set on a
+    given Entry Timeframe at once (see CONTEXT.md's Ensemble entry)."""
+    base = getattr(candidate, "entry_strategy", candidate)
+    return (base.name, candidate.timeframe.value)
+
+
 def align_htf_signal(htf_signal: pd.Series, entry_index: pd.DatetimeIndex) -> pd.Series:
     """Aligns a higher-timeframe signal onto a lower-timeframe (entry) index without look-ahead: each
     entry bar gets the most recent htf_signal value at-or-before its own timestamp, never a future one.

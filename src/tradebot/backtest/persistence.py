@@ -5,9 +5,42 @@ from pathlib import Path
 import pandas as pd
 
 from tradebot.backtest.result import BacktestResult
+from tradebot.backtest.walk_forward import WalkForwardResult
 from tradebot.metrics.drawdown import max_drawdown_pct
 from tradebot.metrics.performance import ENSEMBLE_METRIC_THRESHOLD, performance_metric, total_return_pct
 from tradebot.strategies.base import StrategyCandidate
+
+
+def _serialize_walk_forward(walk_forward: WalkForwardResult | None) -> dict | None:
+    if walk_forward is None:
+        return None
+    return {
+        "passed": walk_forward.passed,
+        "performance_metric": walk_forward.performance_metric,
+        "equity_curve": [
+            {"date": str(date), "equity": float(equity)} for date, equity in walk_forward.equity_curve.items()
+        ],
+        "windows": [
+            {
+                "index": outcome.bounds.index,
+                "selection_start": str(outcome.bounds.selection_start),
+                "selection_end": str(outcome.bounds.selection_end),
+                "test_start": str(outcome.bounds.test_start),
+                "test_end": str(outcome.bounds.test_end),
+                "return_pct": outcome.return_pct,
+                "members": [
+                    {
+                        "candidate_name": member.candidate_name,
+                        "timeframe": member.timeframe,
+                        "performance_metric": member.performance_metric,
+                        "capital_fraction": member.capital_fraction,
+                    }
+                    for member in outcome.members
+                ],
+            }
+            for outcome in walk_forward.windows
+        ],
+    }
 
 
 def save_backtest_results(
@@ -15,6 +48,7 @@ def save_backtest_results(
     path: Path,
     window_start: pd.Timestamp | None = None,
     window_end: pd.Timestamp | None = None,
+    walk_forward: WalkForwardResult | None = None,
 ) -> None:
     """The single source of truth for backtest output: one run, one save. Consumed by the dashboard's
     /api/backtest route (src/tradebot/dashboard/server.py) — nothing re-runs the backtest to display it."""
@@ -53,6 +87,7 @@ def save_backtest_results(
         "window_start": str(window_start) if window_start is not None else None,
         "window_end": str(window_end) if window_end is not None else None,
         "candidates": candidates,
+        "walk_forward": _serialize_walk_forward(walk_forward),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload))
