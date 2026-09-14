@@ -95,3 +95,22 @@ def save_backtest_results(
 
 def load_backtest_results(path: Path) -> dict:
     return json.loads(path.read_text())
+
+
+def save_walk_forward_verdict(walk_forward: WalkForwardResult, path: Path) -> None:
+    """A small side file so the Paper Trading page's status poll (every 1-4s) never has to parse the
+    much larger backtest_results.json just to show the latest verdict — mirrors ensemble.json."""
+    payload = {
+        "passed": walk_forward.passed,
+        "performance_metric": walk_forward.performance_metric,
+        "window_count": len(walk_forward.windows),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload))
+
+
+def load_walk_forward_verdict(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())

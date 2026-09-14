@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from tradebot.backtest.persistence import load_backtest_results
+from tradebot.backtest.persistence import load_backtest_results, load_walk_forward_verdict
 from tradebot.dashboard.state import read_state
 from tradebot.paper.supervisor import AlreadyRunning, NotRunning, PaperTradingSupervisor
 
@@ -20,6 +20,7 @@ DATA_DIR = REPO_DIR / "data"
 STATE_PATH = DATA_DIR / "paper_state.json"
 BACKTEST_RESULTS_PATH = DATA_DIR / "backtest_results.json"
 ENSEMBLE_PATH = DATA_DIR / "ensemble.json"
+WALK_FORWARD_VERDICT_PATH = DATA_DIR / "walk_forward_verdict.json"
 PAPER_TRADING_SCRIPT = REPO_DIR / "scripts" / "run_paper_trading.py"
 
 # Control endpoints start and stop a process, so they only accept requests from this dashboard's own pages.
@@ -76,15 +77,31 @@ def state():
 
 @app.get("/api/paper/status")
 def paper_status():
-    return JSONResponse({**supervisor.status(), "ensemble": ensemble_summary()})
+    return JSONResponse({**supervisor.status(), "ensemble": ensemble_summary(), "walk_forward": walk_forward_summary()})
 
 
 @app.post("/api/paper/start")
-def paper_start(request: Request):
+async def paper_start(request: Request):
     require_dashboard_request(request)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+
     summary = ensemble_summary()
     if not summary["members"]:
         raise HTTPException(status_code=409, detail="No Ensemble to trade yet. Run scripts/run_backtest.py first.")
+
+    verdict = walk_forward_summary()
+    if verdict is not None and not verdict["passed"] and not body.get("acknowledge_failed_walk_forward"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The latest Walk-Forward Validation did not pass (out-of-sample Performance Metric "
+                f"{verdict['performance_metric']:.2f}). Starting anyway needs explicit acknowledgment."
+            ),
+        )
+
     try:
         return JSONResponse({**supervisor.start(), "ensemble": summary})
     except AlreadyRunning as error:
@@ -108,6 +125,12 @@ def ensemble_summary() -> dict:
     members = len(json.loads(ENSEMBLE_PATH.read_text(encoding="utf-8")).get("members", []))
     saved_at = datetime.fromtimestamp(ENSEMBLE_PATH.stat().st_mtime, tz=timezone.utc).isoformat()
     return {"members": members, "saved_at": saved_at}
+
+
+def walk_forward_summary() -> dict | None:
+    """The latest Walk-Forward Validation verdict, or None when no backtest run has produced one yet
+    (an older backtest_results.json predating this file, or no backtest run at all)."""
+    return load_walk_forward_verdict(WALK_FORWARD_VERDICT_PATH)
 
 
 @app.get("/backtest", response_class=HTMLResponse)

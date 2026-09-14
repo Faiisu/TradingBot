@@ -1,8 +1,15 @@
 import pandas as pd
+import pytest
 
-from tradebot.backtest.persistence import load_backtest_results, save_backtest_results
+from tradebot.backtest.persistence import (
+    load_backtest_results,
+    load_walk_forward_verdict,
+    save_backtest_results,
+    save_walk_forward_verdict,
+)
 from tradebot.backtest.result import BacktestResult
 from tradebot.backtest.trade import Trade
+from tradebot.backtest.walk_forward import WalkForwardResult, WindowOutcome, WindowBounds
 from tradebot.timeframe import Timeframe
 
 
@@ -94,3 +101,31 @@ def test_in_ensemble_follows_the_performance_metric_threshold(tmp_path):
     assert candidates[0]["in_ensemble"] is True
     assert candidates[1]["in_ensemble"] is False
     assert candidates[1]["trade_count"] == 0
+
+
+def _fake_walk_forward(passed: bool, metric: float, window_count: int) -> WalkForwardResult:
+    bounds = WindowBounds(
+        index=0,
+        selection_start=pd.Timestamp("2024-01-01"),
+        selection_end=pd.Timestamp("2024-06-29"),
+        test_start=pd.Timestamp("2024-06-29"),
+        test_end=pd.Timestamp("2024-08-28"),
+    )
+    windows = [WindowOutcome(bounds=bounds, members=[], return_pct=1.0) for _ in range(window_count)]
+    return WalkForwardResult(windows=windows, equity_curve=pd.Series([1.0]), performance_metric=metric, passed=passed)
+
+
+def test_save_and_load_walk_forward_verdict_round_trips(tmp_path):
+    path = tmp_path / "walk_forward_verdict.json"
+    save_walk_forward_verdict(_fake_walk_forward(passed=True, metric=5419.77, window_count=9), path)
+
+    verdict = load_walk_forward_verdict(path)
+
+    assert verdict["passed"] is True
+    assert verdict["performance_metric"] == pytest.approx(5419.77)
+    assert verdict["window_count"] == 9
+    assert verdict["generated_at"]
+
+
+def test_load_walk_forward_verdict_is_none_when_no_verdict_has_ever_been_saved(tmp_path):
+    assert load_walk_forward_verdict(tmp_path / "does_not_exist.json") is None

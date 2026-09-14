@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from tradebot.backtest.engine import BacktestEngine
-from tradebot.backtest.persistence import save_backtest_results
+from tradebot.backtest.persistence import save_backtest_results, save_walk_forward_verdict
 from tradebot.backtest.result import BacktestResult
 from tradebot.backtest.walk_forward import run_walk_forward
 from tradebot.data.cache import load_ohlcv, trim_to_common_window
@@ -83,6 +83,10 @@ def run() -> None:
     save_backtest_results(candidates_and_results, results_path, window_start, window_end, walk_forward)
     print(f"\nFull results (incl. trade-by-trade history + Walk-Forward Validation) saved to {results_path} "
           f"(used by the dashboard's /backtest page)")
+
+    verdict_path = CACHE_DIR.parent / "walk_forward_verdict.json"
+    save_walk_forward_verdict(walk_forward, verdict_path)
+    print(f"Walk-Forward verdict saved to {verdict_path} (used by the Paper Trading page's Start gate)")
 
 
 if __name__ == "__main__":

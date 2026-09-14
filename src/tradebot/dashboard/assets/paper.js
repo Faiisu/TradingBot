@@ -72,6 +72,8 @@
       ? `${status.state === 'running' ? 'Trading' : 'Start will trade'} ${ensemble.members} Ensemble members on the Exness demo account${saved}`
       : 'No Ensemble yet — run scripts/run_backtest.py before starting.';
 
+    renderWalkForward(status.walk_forward);
+
     const canStart = status.state === 'stopped' || status.state === 'crashed';
     $('start-btn').hidden = !canStart;
     $('start-btn').disabled = busy || !ensemble.members;
@@ -84,9 +86,29 @@
     if (status.state === 'crashed') $('log-panel').open = true;
   }
 
+  function renderWalkForward(walkForward) {
+    if (!walkForward) {
+      $('wfv-detail').textContent = 'No Walk-Forward Validation yet — run scripts/run_backtest.py to check the Ensemble out of sample.';
+      return;
+    }
+    const verdict = walkForward.passed
+      ? `<span class="pill good">Passed</span>`
+      : `<span class="pill bad">Failed</span>`;
+    $('wfv-detail').innerHTML =
+      `Walk-Forward Validation ${verdict} · out-of-sample metric ${num(walkForward.performance_metric)} ` +
+      `over ${num(walkForward.window_count, 0)} Test Window${walkForward.window_count === 1 ? '' : 's'}`;
+  }
+
   async function control(action) {
     if (busy) return;
     if (action === 'stop' && !confirm('Stop paper trading? Open simulated positions are discarded — the next Start is a fresh session.')) return;
+
+    let acknowledgeFailedWalkForward = false;
+    if (action === 'start' && lastStatus && lastStatus.walk_forward && !lastStatus.walk_forward.passed) {
+      const metric = num(lastStatus.walk_forward.performance_metric);
+      if (!confirm(`Walk-Forward Validation did not pass (out-of-sample Performance Metric ${metric}). Start paper trading anyway?`)) return;
+      acknowledgeFailedWalkForward = true;
+    }
 
     busy = true;
     $('action-error').hidden = true;
@@ -100,7 +122,7 @@
       const response = await fetch(`/api/paper/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify(action === 'start' ? { acknowledge_failed_walk_forward: acknowledgeFailedWalkForward } : {}),
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));

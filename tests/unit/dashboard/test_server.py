@@ -29,6 +29,7 @@ def fake_supervisor(monkeypatch):
     fake = _FakeSupervisor()
     monkeypatch.setattr(server, "supervisor", fake)
     monkeypatch.setattr(server, "ensemble_summary", lambda: {"members": 25, "saved_at": None})
+    monkeypatch.setattr(server, "walk_forward_summary", lambda: None)
     return fake
 
 
@@ -76,3 +77,46 @@ def test_status_includes_the_ensemble_that_start_would_trade(client, fake_superv
     body = client.get("/api/paper/status").json()
     assert body["state"] == "stopped"
     assert body["ensemble"]["members"] == 25
+
+
+def test_status_includes_the_walk_forward_verdict(client, fake_supervisor, monkeypatch):
+    monkeypatch.setattr(server, "walk_forward_summary", lambda: {"passed": False, "performance_metric": -12.5, "window_count": 9})
+    body = client.get("/api/paper/status").json()
+    assert body["walk_forward"] == {"passed": False, "performance_metric": -12.5, "window_count": 9}
+
+
+def test_start_needs_no_acknowledgment_when_there_is_no_walk_forward_verdict_yet(client, fake_supervisor):
+    response = client.post("/api/paper/start", headers={**JSON, "Origin": LOCAL}, content="{}")
+    assert response.status_code == 200
+    assert fake_supervisor.started == 1
+
+
+def test_start_with_a_malformed_body_is_treated_as_no_acknowledgment_rather_than_erroring(client, fake_supervisor, monkeypatch):
+    monkeypatch.setattr(server, "walk_forward_summary", lambda: {"passed": False, "performance_metric": -12.5, "window_count": 9})
+    response = client.post("/api/paper/start", headers={**JSON, "Origin": LOCAL}, content="not json")
+    assert response.status_code == 409
+    assert fake_supervisor.started == 0
+
+
+def test_start_needs_no_acknowledgment_when_the_walk_forward_verdict_passed(client, fake_supervisor, monkeypatch):
+    monkeypatch.setattr(server, "walk_forward_summary", lambda: {"passed": True, "performance_metric": 5419.77, "window_count": 9})
+    response = client.post("/api/paper/start", headers={**JSON, "Origin": LOCAL}, content="{}")
+    assert response.status_code == 200
+    assert fake_supervisor.started == 1
+
+
+def test_start_is_refused_without_acknowledgment_when_the_walk_forward_verdict_failed(client, fake_supervisor, monkeypatch):
+    monkeypatch.setattr(server, "walk_forward_summary", lambda: {"passed": False, "performance_metric": -12.5, "window_count": 9})
+    response = client.post("/api/paper/start", headers={**JSON, "Origin": LOCAL}, content="{}")
+    assert response.status_code == 409
+    assert "-12.5" in response.json()["detail"]
+    assert fake_supervisor.started == 0
+
+
+def test_start_succeeds_when_a_failed_walk_forward_verdict_is_acknowledged(client, fake_supervisor, monkeypatch):
+    monkeypatch.setattr(server, "walk_forward_summary", lambda: {"passed": False, "performance_metric": -12.5, "window_count": 9})
+    response = client.post(
+        "/api/paper/start", headers={**JSON, "Origin": LOCAL}, content='{"acknowledge_failed_walk_forward": true}'
+    )
+    assert response.status_code == 200
+    assert fake_supervisor.started == 1
