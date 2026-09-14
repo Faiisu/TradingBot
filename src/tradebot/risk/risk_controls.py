@@ -11,11 +11,18 @@ from tradebot.risk.swap import count_rollover_nights, swap_price
 class RiskControls:
     risk_pct_per_trade: float = 0.01
     atr_stop_multiplier: float = 2.0
-    # Caps notional exposure at 1x equity (no leverage) by default. The original 5.0 default let a
-    # tight-stop trade take on 5x leveraged exposure, which combined with thousands of trades over a
-    # 2-year backtest compounded into unrealistic (millions-of-percent) returns. Revisit once real
-    # trade counts/frequency are known from real MT5 data.
-    max_position_fraction: float = 1.0
+    # Caps notional exposure at 0.2x of a candidate's own allocated capital per trade. The original 5.0
+    # default (5x leverage) and the later 1.0 (no leverage) both still let 2*ATR-based stops be tight
+    # enough, on real data, that this cap binds on 83-99.5% of bars across every Timeframe (H1 to M5) —
+    # so almost every trade was sized at the cap rather than at the risk-based fraction the formula
+    # intends, and stop-losses ended up costing far less than risk_pct_per_trade while signal-change
+    # exits stayed unbounded. That asymmetry (tiny bounded losses vs. unbounded gains) compounded across
+    # thousands of trades into implausible returns (e.g. macd_12_26_9 on M5: +57,042% at 2.09% max
+    # drawdown). Lowering the cap to 0.2 shrinks every trade proportionally and was chosen as the
+    # immediate mitigation; it does not remove the underlying asymmetry — bounding the winning side too
+    # (a trailing stop or profit target) is the follow-up (see .scratch/phase-1-real-data-validation/
+    # issues/06-bound-the-winning-side-of-trades.md).
+    max_position_fraction: float = 0.2
     # Placeholder round-trip transaction cost in price points (spread + commission), until step 9
     # reads the real spread from MT5's symbol_info() for the connected Exness account.
     round_trip_cost_price: float = 0.30
