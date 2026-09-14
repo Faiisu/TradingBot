@@ -1,12 +1,15 @@
 import itertools
 
+from tradebot.strategies.adx_dmi import AdxDmiStrategy
 from tradebot.strategies.atr_channel_breakout import AtrChannelBreakoutStrategy
 from tradebot.strategies.base import StrategyCandidate
 from tradebot.strategies.bollinger_breakout import BollingerBreakoutStrategy
+from tradebot.strategies.donchian_breakout import DonchianBreakoutStrategy
 from tradebot.strategies.ma_crossover import MaCrossoverStrategy
 from tradebot.strategies.macd import MacdStrategy
 from tradebot.strategies.mtf import MtfCandidate, ema_slope_filter
 from tradebot.strategies.rsi_mean_reversion import RsiMeanReversionStrategy
+from tradebot.strategies.supertrend import SupertrendStrategy
 from tradebot.timeframe import Timeframe
 
 RULE_SETS = [
@@ -15,6 +18,9 @@ RULE_SETS = [
     MacdStrategy,
     BollingerBreakoutStrategy,
     AtrChannelBreakoutStrategy,
+    DonchianBreakoutStrategy,
+    SupertrendStrategy,
+    AdxDmiStrategy,
 ]
 
 TIMEFRAMES = [Timeframe.H1, Timeframe.M30, Timeframe.M15, Timeframe.M5]

@@ -123,6 +123,9 @@
     [/^atr_channel_breakout_(\d+)_(\d+)_([\d.]+)/, (m) => `ATR Channel ${m[1]}/${m[2]}/${m[3]}`],
     [/^ma_crossover_(\d+)_(\d+)/, (m) => `MA Crossover ${m[1]}/${m[2]}`],
     [/^rsi_mean_reversion_(\d+)/, (m) => `RSI Reversion ${m[1]}`],
+    [/^donchian_breakout_(\d+)_(\d+)/, (m) => `Donchian Breakout ${m[1]}/${m[2]}`],
+    [/^supertrend_(\d+)_([\d.]+)/, (m) => `Supertrend ${m[1]}×${m[2]}`],
+    [/^adx_dmi_(\d+)/, (m) => `ADX/DMI ${m[1]}`],
   ];
 
   function ruleSetLabel(candidateName) {

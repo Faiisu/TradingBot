@@ -2,7 +2,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tradebot.strategies.base import DataRequirement, ensure_reference_market_resolvable, resolve_supporting_data
+from tradebot.strategies.base import (
+    DataRequirement,
+    channel_breakout_signals,
+    ensure_reference_market_resolvable,
+    resolve_supporting_data,
+)
 from tradebot.timeframe import Timeframe
 
 
@@ -60,3 +65,30 @@ def test_ensure_reference_market_resolvable_is_the_single_shared_check():
 
     with pytest.raises(NotImplementedError, match="DXY"):
         ensure_reference_market_resolvable(DataRequirement(timeframe=Timeframe.H1, reference_market="DXY"))
+
+
+def test_channel_breakout_signals_uses_a_narrower_exit_channel_than_entry():
+    index = pd.date_range("2024-01-01", periods=6, freq="h")
+    close = pd.Series([100.0, 100.0, 105.0, 101.0, 97.0, 98.0], index=index)
+    entry_upper = pd.Series([104.0] * 6, index=index)
+    entry_lower = pd.Series([96.0] * 6, index=index)
+    exit_upper = pd.Series([103.0] * 6, index=index)  # narrower than entry_upper
+    exit_lower = pd.Series([99.0] * 6, index=index)  # narrower than entry_lower
+
+    signals = channel_breakout_signals(close, entry_upper, entry_lower, exit_upper, exit_lower)
+
+    # bar 2: close 105 > entry_upper 104 -> enters long
+    # bar 3: close 101 is still above exit_lower 99 -> stays long (exit channel is narrower than entry)
+    # bar 4: close 97 breaks below exit_lower 99 -> goes flat
+    # bar 5: close 98 is inside both channels -> stays flat
+    assert list(signals) == [0, 0, 1, 1, 0, 0]
+
+
+def test_channel_breakout_signals_ignores_nan_warmup_bars():
+    index = pd.date_range("2024-01-01", periods=3, freq="h")
+    close = pd.Series([100.0, 100.0, 100.0], index=index)
+    nan_series = pd.Series([float("nan")] * 3, index=index)
+
+    signals = channel_breakout_signals(close, nan_series, nan_series, nan_series, nan_series)
+
+    assert list(signals) == [0, 0, 0]
