@@ -8,6 +8,9 @@ class Timeframe(str, Enum):
     H1 = "H1"
 
 
+TIMEFRAME_SECONDS = {Timeframe.M5: 300, Timeframe.M15: 900, Timeframe.M30: 1800, Timeframe.H1: 3600}
+
+
 def to_mt5_timeframe(timeframe: Timeframe):
     import MetaTrader5 as mt5
 

@@ -90,6 +90,21 @@ def test_load_ohlcv_force_refresh_re_fetches(tmp_path):
     assert len(df) > 10  # got fresh data, not the 10-row stub
 
 
+def test_short_history_warning_points_at_the_mt5_bar_limit_not_the_broker(tmp_path, capsys):
+    """A short fetch used to be blamed on broker retention; it was really MT5's 'Max bars in chart'."""
+
+    class _TruncatedMt5(_FakeMt5):
+        def copy_rates_range(self, symbol, timeframe, date_from, date_to):
+            cutoff = datetime.now() - timedelta(days=100)  # only the last ~100 days come back
+            return super().copy_rates_range(symbol, timeframe, max(date_from, cutoff), max(date_to, cutoff))
+
+    load_ohlcv(Timeframe.M5, mt5_api=_TruncatedMt5(), cache_dir=tmp_path, num_years=1)
+
+    output = capsys.readouterr().out
+    assert "Max bars" in output
+    assert "broker only retains" not in output
+
+
 def test_load_ohlcv_skips_cache_write_on_empty_result(tmp_path):
     """If MT5 returns no data, the parquet file should NOT be written."""
 

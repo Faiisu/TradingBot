@@ -1,8 +1,28 @@
+import math
 from datetime import datetime, timedelta
 
 import pandas as pd
 
-from tradebot.timeframe import Timeframe, to_mt5_timeframe
+from tradebot.timeframe import TIMEFRAME_SECONDS, Timeframe, to_mt5_timeframe
+
+
+class InsufficientBarCapacity(RuntimeError):
+    pass
+
+
+def ensure_bar_capacity(mt5_api, timeframes: list[Timeframe], num_years: int) -> None:
+    """Refuses to fetch when the MT5 terminal's 'Max bars in chart' setting could cut history short.
+    MT5 silently returns at most that many bars per symbol/timeframe, which looks exactly like the broker
+    not keeping enough history — this is what truncated M5 to ~514 days before."""
+    maxbars = mt5_api.terminal_info().maxbars
+    for timeframe in timeframes:
+        needed = math.ceil(num_years * 365 * 24 * 3600 / TIMEFRAME_SECONDS[timeframe])
+        if needed > maxbars:
+            raise InsufficientBarCapacity(
+                f"MT5 'Max bars in chart' is {maxbars:,}, but {num_years} years of {timeframe.value} can need up to "
+                f"{needed:,} bars. Set Tools → Options → Charts → Max bars in chart to Unlimited, restart the terminal, "
+                f"then fetch again."
+            )
 
 
 def fetch_history(mt5_api, symbol: str, timeframe: Timeframe, date_from: datetime, date_to: datetime) -> pd.DataFrame:

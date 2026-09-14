@@ -1,9 +1,32 @@
 from datetime import datetime, timedelta
 
 import numpy as np
+import pytest
 
-from tradebot.data.history import fetch_history, report_coverage
+from tradebot.data.history import InsufficientBarCapacity, ensure_bar_capacity, fetch_history, report_coverage
 from tradebot.timeframe import Timeframe
+
+
+class _FakeTerminalMt5:
+    """Only what the capacity check needs: the terminal's 'Max bars in chart' setting."""
+
+    def __init__(self, maxbars: int):
+        self.maxbars = maxbars
+
+    def terminal_info(self):
+        return self
+
+
+def test_refuses_to_fetch_when_the_terminal_bar_limit_would_truncate_history():
+    # the real failure: a 100,000-bar cap cut two years of M5 XAUUSD down to ~514 days
+    with pytest.raises(InsufficientBarCapacity, match="Max bars"):
+        ensure_bar_capacity(_FakeTerminalMt5(maxbars=100_000), [Timeframe.H1, Timeframe.M5], num_years=2)
+
+
+def test_allows_fetching_when_every_requested_timeframe_fits_the_bar_limit():
+    # two years of H1 is at most 2 * 365 * 24 = 17,520 bars, well under a 100,000 cap
+    ensure_bar_capacity(_FakeTerminalMt5(maxbars=100_000), [Timeframe.H1], num_years=2)
+    ensure_bar_capacity(_FakeTerminalMt5(maxbars=100_000_000), [Timeframe.H1, Timeframe.M5], num_years=2)
 
 RATE_DTYPE = [
     ("time", "i8"),

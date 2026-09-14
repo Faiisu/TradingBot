@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from tradebot.data.cache import load_ohlcv
+from tradebot.data.history import ensure_bar_capacity
 from tradebot.mt5_client import mt5_session
 from tradebot.strategies.registry import TIMEFRAMES
 
@@ -24,6 +25,8 @@ NUM_YEARS = 2
 
 def run(force: bool = False) -> None:
     with mt5_session() as mt5:
+        print(f"MT5 Max bars in chart: {mt5.terminal_info().maxbars:,}")
+        ensure_bar_capacity(mt5, TIMEFRAMES, NUM_YEARS)
         for timeframe in TIMEFRAMES:
             load_ohlcv(
                 timeframe,

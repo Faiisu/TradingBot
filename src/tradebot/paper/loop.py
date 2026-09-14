@@ -8,9 +8,7 @@ from tradebot.dashboard.state import build_state, write_state
 from tradebot.indicators import atr
 from tradebot.paper.simulated_broker import SimulatedBroker
 from tradebot.strategies.base import StrategyCandidate
-from tradebot.timeframe import Timeframe, to_mt5_timeframe
-
-TIMEFRAME_SECONDS = {Timeframe.M5: 300, Timeframe.M15: 900, Timeframe.M30: 1800, Timeframe.H1: 3600}
+from tradebot.timeframe import TIMEFRAME_SECONDS, Timeframe, to_mt5_timeframe
 
 DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
 DEFAULT_STATE_PATH = DATA_DIR / "paper_state.json"

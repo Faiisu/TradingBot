@@ -92,8 +92,9 @@ def load_ohlcv(
 
     if cov["actual_days"] < cov["requested_days"] * 0.9:
         print(
-            f"[{timeframe.value}] WARNING: broker only retains {cov['actual_days']}d of history "
-            f"for this symbol/timeframe, short of the requested {cov['requested_days']}d"
+            f"[{timeframe.value}] WARNING: got only {cov['actual_days']}d of the requested {cov['requested_days']}d. "
+            f"Most often MT5's 'Max bars in chart' setting ({cov['bars']:,} bars came back) — raise it under "
+            f"Tools → Options → Charts; otherwise the broker keeps less history for this timeframe"
         )
 
     df.to_parquet(path)
