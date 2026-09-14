@@ -142,19 +142,21 @@ def test_reentry_loop_never_reads_past_the_segments_own_end(risk_controls):
     assert all(t.exit_time <= ohlcv.index[21] for t in result.trades)
 
 
-def test_engine_runs_an_mtf_candidate_with_htf_ohlcv(risk_controls):
+def test_engine_runs_an_mtf_candidate_via_the_supporting_data_channel(risk_controls):
+    from tradebot.strategies.base import DataRequirement
     from tradebot.strategies.mtf import MtfCandidate
 
     close = np.concatenate([np.full(20, 100.0), np.linspace(100, 160, 40)])
     ohlcv = _ohlcv(close)  # M15-shaped in name only; freq doesn't matter for this test
     htf_ohlcv = _ohlcv(close)  # same series stands in for the H1 filter feed
+    supporting = {DataRequirement(timeframe=Timeframe.H1): htf_ohlcv}
 
     entry = _AlwaysLongAfterWarmupStrategy(Timeframe.M15, warmup=20)
     always_up_filter = lambda df: pd.Series(1.0, index=df.index)  # noqa: E731
     candidate = MtfCandidate(entry, always_up_filter, "always_up", Timeframe.H1)
 
     engine = BacktestEngine(risk_controls=risk_controls)
-    result = engine.run(candidate, ohlcv, htf_ohlcv)
+    result = engine.run(candidate, ohlcv, supporting)
 
     assert len(result.trades) == 1
     assert result.trades[0].direction == 1
@@ -162,6 +164,6 @@ def test_engine_runs_an_mtf_candidate_with_htf_ohlcv(risk_controls):
 
     always_down_filter = lambda df: pd.Series(-1.0, index=df.index)  # noqa: E731
     blocked_candidate = MtfCandidate(entry, always_down_filter, "always_down", Timeframe.H1)
-    blocked_result = engine.run(blocked_candidate, ohlcv, htf_ohlcv)
+    blocked_result = engine.run(blocked_candidate, ohlcv, supporting)
 
     assert blocked_result.trades == []

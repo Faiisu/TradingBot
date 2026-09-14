@@ -5,7 +5,7 @@ from tradebot.backtest.result import BacktestResult
 from tradebot.backtest.trade import Trade
 from tradebot.indicators import atr
 from tradebot.risk.risk_controls import RiskControls
-from tradebot.strategies.base import StrategyCandidate
+from tradebot.strategies.base import DataRequirement, StrategyCandidate
 
 
 def _find_segments(signal: np.ndarray) -> list[tuple[int, int, int]]:
@@ -33,8 +33,13 @@ class BacktestEngine:
         self.initial_equity = initial_equity
         self.atr_period = atr_period
 
-    def run(self, candidate: StrategyCandidate, ohlcv: pd.DataFrame, htf_ohlcv: pd.DataFrame | None = None) -> BacktestResult:
-        signal = candidate.generate_signals(ohlcv, htf_ohlcv).to_numpy()
+    def run(
+        self,
+        candidate: StrategyCandidate,
+        ohlcv: pd.DataFrame,
+        supporting: dict[DataRequirement, pd.DataFrame] | None = None,
+    ) -> BacktestResult:
+        signal = candidate.generate_signals(ohlcv, supporting).to_numpy()
         close = ohlcv["close"].to_numpy()
         low = ohlcv["low"].to_numpy()
         high = ohlcv["high"].to_numpy()

@@ -1,17 +1,20 @@
 import pandas as pd
 
 from tradebot.indicators import sma
+from tradebot.strategies.base import DataRequirement
 from tradebot.timeframe import Timeframe
 
 
 class MaCrossoverStrategy:
+    supporting_data: tuple[DataRequirement, ...] = ()
+
     def __init__(self, timeframe: Timeframe, fast: int = 20, slow: int = 50):
         self.timeframe = timeframe
         self.fast = fast
         self.slow = slow
         self.name = f"ma_crossover_{fast}_{slow}"
 
-    def generate_signals(self, ohlcv: pd.DataFrame, htf_ohlcv: pd.DataFrame | None = None) -> pd.Series:
+    def generate_signals(self, ohlcv: pd.DataFrame, supporting: dict[DataRequirement, pd.DataFrame] | None = None) -> pd.Series:
         close = ohlcv["close"]
         fast_ma = sma(close, self.fast)
         slow_ma = sma(close, self.slow)

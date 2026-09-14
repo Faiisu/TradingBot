@@ -7,31 +7,20 @@ Reads OHLCV data from the local parquet cache (data/cache/).  If the cache is em
 import sys
 from pathlib import Path
 
-import pandas as pd
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from tradebot.backtest.engine import BacktestEngine
 from tradebot.backtest.persistence import save_backtest_results
 from tradebot.backtest.result import BacktestResult
-from tradebot.data.cache import load_ohlcv
+from tradebot.data.cache import load_ohlcv, trim_to_common_window
 from tradebot.ensemble.selection import save_ensemble, select_ensemble
 from tradebot.metrics.drawdown import max_drawdown_pct
 from tradebot.metrics.performance import performance_metric, total_return_pct
 from tradebot.risk.risk_controls import RiskControls
+from tradebot.strategies.base import resolve_supporting_data
 from tradebot.strategies.registry import TIMEFRAMES, build_candidates
-from tradebot.timeframe import Timeframe
 
 CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "cache"
-
-
-def trim_to_common_window(ohlcv_by_timeframe: dict[Timeframe, pd.DataFrame]) -> dict[Timeframe, pd.DataFrame]:
-    """Trims every timeframe's data to the same start date, so all candidates are compared over
-    identical market conditions rather than some getting a longer history than others (M5's broker
-    retention is shorter than H1/M30/M15's, so it was previously the limiting factor)."""
-    common_start = max(df.index.min() for df in ohlcv_by_timeframe.values())
-    print(f"Trimming all timeframes to a common window starting {common_start} (the shortest available history)")
-    return {tf: df.loc[df.index >= common_start] for tf, df in ohlcv_by_timeframe.items()}
 
 
 def run() -> None:
@@ -46,8 +35,8 @@ def run() -> None:
     candidates_and_results: list[tuple] = []
     for candidate in build_candidates():
         ohlcv = ohlcv_by_timeframe[candidate.timeframe]
-        htf_ohlcv = ohlcv_by_timeframe.get(getattr(candidate, "filter_timeframe", None))
-        candidates_and_results.append((candidate, engine.run(candidate, ohlcv, htf_ohlcv)))
+        supporting = resolve_supporting_data(candidate, ohlcv_by_timeframe)
+        candidates_and_results.append((candidate, engine.run(candidate, ohlcv, supporting)))
 
     results: list[BacktestResult] = [r for _, r in candidates_and_results]
     ranked = sorted(results, key=lambda r: performance_metric(r.equity_curve), reverse=True)

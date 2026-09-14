@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from tradebot.indicators import ema
-from tradebot.strategies.base import StrategyCandidate, align_htf_signal
+from tradebot.strategies.base import DataRequirement, StrategyCandidate, align_htf_signal
 from tradebot.timeframe import Timeframe
 
 
@@ -31,10 +31,13 @@ class MtfCandidate:
         self.filter_timeframe = filter_timeframe
         self.timeframe = entry_strategy.timeframe
         self.name = f"{entry_strategy.name}_mtf_{filter_name}_{filter_timeframe.value}filter"
+        self._requirement = DataRequirement(timeframe=filter_timeframe)
+        self.supporting_data = (self._requirement,)
 
-    def generate_signals(self, ohlcv: pd.DataFrame, htf_ohlcv: pd.DataFrame | None = None) -> pd.Series:
+    def generate_signals(self, ohlcv: pd.DataFrame, supporting: dict[DataRequirement, pd.DataFrame] | None = None) -> pd.Series:
+        htf_ohlcv = (supporting or {}).get(self._requirement)
         if htf_ohlcv is None:
-            raise ValueError(f"{self.name} requires htf_ohlcv (its {self.filter_timeframe.value} Trend Filter data)")
+            raise ValueError(f"{self.name} requires its {self.filter_timeframe.value} Trend Filter data in `supporting`")
 
         entry_signal = self.entry_strategy.generate_signals(ohlcv)
         htf_trend = self.filter_fn(htf_ohlcv)

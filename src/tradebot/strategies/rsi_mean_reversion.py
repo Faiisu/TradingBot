@@ -2,10 +2,13 @@ import numpy as np
 import pandas as pd
 
 from tradebot.indicators import rsi
+from tradebot.strategies.base import DataRequirement
 from tradebot.timeframe import Timeframe
 
 
 class RsiMeanReversionStrategy:
+    supporting_data: tuple[DataRequirement, ...] = ()
+
     def __init__(self, timeframe: Timeframe, period: int = 14, oversold: float = 30, overbought: float = 70):
         self.timeframe = timeframe
         self.period = period
@@ -13,7 +16,7 @@ class RsiMeanReversionStrategy:
         self.overbought = overbought
         self.name = f"rsi_mean_reversion_{period}"
 
-    def generate_signals(self, ohlcv: pd.DataFrame, htf_ohlcv: pd.DataFrame | None = None) -> pd.Series:
+    def generate_signals(self, ohlcv: pd.DataFrame, supporting: dict[DataRequirement, pd.DataFrame] | None = None) -> pd.Series:
         close = ohlcv["close"]
         rsi_values = rsi(close, self.period).to_numpy()
 

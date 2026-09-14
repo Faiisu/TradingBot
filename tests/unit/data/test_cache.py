@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tradebot.data.cache import load_ohlcv
+from tradebot.data.cache import load_ohlcv, trim_to_common_window
 from tradebot.timeframe import Timeframe
 
 RATE_DTYPE = [
@@ -81,7 +81,7 @@ def test_load_ohlcv_force_refresh_re_fetches(tmp_path):
         index=index,
     )
     cached.index.name = "time"
-    (tmp_path / "XAUUSDm_H1.parquet").to_parquet if False else cached.to_parquet(tmp_path / "XAUUSDm_H1.parquet")
+    cached.to_parquet(tmp_path / "XAUUSDm_H1.parquet")
 
     fake = _FakeMt5()
     df = load_ohlcv(Timeframe.H1, mt5_api=fake, cache_dir=tmp_path, num_years=1, force_refresh=True)
@@ -118,3 +118,37 @@ def test_load_ohlcv_skips_cache_write_on_empty_result(tmp_path):
     df = load_ohlcv(Timeframe.M30, mt5_api=_EmptyMt5(), cache_dir=tmp_path, num_years=1)
     assert df.empty
     assert not (tmp_path / "XAUUSDm_M30.parquet").exists()
+
+
+def _series(start: str, periods: int, freq: str = "h") -> pd.DataFrame:
+    index = pd.date_range(start, periods=periods, freq=freq)
+    close = np.arange(periods, dtype=float) + 100
+    return pd.DataFrame({"open": close, "high": close, "low": close, "close": close}, index=index)
+
+
+def test_trim_to_common_window_cuts_every_series_to_the_latest_start():
+    data = {
+        # 3 days of hourly bars, starting earliest
+        Timeframe.H1: _series("2024-01-01", periods=72, freq="h"),
+        # 15-minute bars starting 2 days later -> the common start, well within H1's range
+        Timeframe.M15: _series("2024-01-03", periods=10, freq="15min"),
+    }
+    trimmed = trim_to_common_window(data)
+
+    common_start = pd.Timestamp("2024-01-03")
+    assert trimmed[Timeframe.H1].index.min() == common_start
+    assert trimmed[Timeframe.M15].index.min() == common_start
+    # nothing before the common start survives
+    assert (trimmed[Timeframe.H1].index >= common_start).all()
+    assert len(trimmed[Timeframe.H1]) == 24  # the last day of the original 72 hourly bars
+    assert len(trimmed[Timeframe.M15]) == 10  # already started at the common start, untouched
+
+
+def test_trim_to_common_window_is_a_noop_for_a_single_series():
+    data = {Timeframe.H1: _series("2024-01-01", periods=5)}
+    trimmed = trim_to_common_window(data)
+    assert trimmed[Timeframe.H1].equals(data[Timeframe.H1])
+
+
+def test_trim_to_common_window_handles_empty_input():
+    assert trim_to_common_window({}) == {}

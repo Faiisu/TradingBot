@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tradebot.strategies.base import align_htf_signal
+from tradebot.strategies.base import DataRequirement, align_htf_signal
 from tradebot.strategies.mtf import MtfCandidate, ema_slope_filter
 from tradebot.timeframe import Timeframe
 
@@ -67,9 +67,17 @@ class _StubEntryStrategy:
         self.timeframe = timeframe
         self.name = "stub_entry"
         self.fixed_signal = fixed_signal
+        self.supporting_data = ()
 
-    def generate_signals(self, ohlcv, htf_ohlcv=None):
+    def generate_signals(self, ohlcv, supporting=None):
         return pd.Series(self.fixed_signal, index=ohlcv.index)
+
+
+def test_mtf_candidate_declares_its_filter_timeframe_as_a_requirement():
+    entry = _StubEntryStrategy(Timeframe.M15, fixed_signal=1.0)
+    candidate = MtfCandidate(entry, lambda df: df, "ema_slope", Timeframe.H1)
+
+    assert candidate.supporting_data == (DataRequirement(timeframe=Timeframe.H1),)
 
 
 def test_mtf_candidate_keeps_entry_signal_when_filter_agrees():
@@ -80,7 +88,7 @@ def test_mtf_candidate_keeps_entry_signal_when_filter_agrees():
     always_up_filter = lambda df: pd.Series(1.0, index=df.index)  # noqa: E731
 
     candidate = MtfCandidate(entry, always_up_filter, "always_up", Timeframe.H1)
-    signals = candidate.generate_signals(ohlcv, htf_ohlcv)
+    signals = candidate.generate_signals(ohlcv, {DataRequirement(timeframe=Timeframe.H1): htf_ohlcv})
 
     assert (signals == 1.0).all()
 
@@ -93,18 +101,20 @@ def test_mtf_candidate_forces_flat_when_filter_disagrees():
     always_down_filter = lambda df: pd.Series(-1.0, index=df.index)  # noqa: E731
 
     candidate = MtfCandidate(entry, always_down_filter, "always_down", Timeframe.H1)
-    signals = candidate.generate_signals(ohlcv, htf_ohlcv)
+    signals = candidate.generate_signals(ohlcv, {DataRequirement(timeframe=Timeframe.H1): htf_ohlcv})
 
     assert (signals == 0.0).all()
 
 
-def test_mtf_candidate_requires_htf_ohlcv():
+def test_mtf_candidate_requires_its_filter_data_in_supporting():
     entry = _StubEntryStrategy(Timeframe.M15, fixed_signal=1.0)
     candidate = MtfCandidate(entry, lambda df: df, "noop", Timeframe.H1)
     ohlcv = _ohlcv_from_close(np.linspace(100, 110, 10), freq="15min")
 
     with pytest.raises(ValueError):
-        candidate.generate_signals(ohlcv, htf_ohlcv=None)
+        candidate.generate_signals(ohlcv, supporting=None)
+    with pytest.raises(ValueError):
+        candidate.generate_signals(ohlcv, supporting={})  # present but missing this candidate's own key
 
 
 def test_mtf_candidate_name_and_timeframe():

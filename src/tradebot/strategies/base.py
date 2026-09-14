@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
@@ -6,14 +7,58 @@ import pandas as pd
 from tradebot.timeframe import Timeframe
 
 
+@dataclass(frozen=True)
+class DataRequirement:
+    """One piece of supporting data a Strategy Candidate declares it needs, beyond its own ohlcv.
+    reference_market=None means "the traded instrument itself, on this Timeframe" (what an MTF
+    Candidate's Trend Filter needs today); a Reference Market label (e.g. "DXY") is what a Market
+    Filter will need — see .scratch/rule-set-expansion/issues/07-dxy-market-filter-end-to-end.md."""
+
+    timeframe: Timeframe
+    reference_market: str | None = None
+
+
 class StrategyCandidate(Protocol):
     name: str
     timeframe: Timeframe
+    supporting_data: tuple[DataRequirement, ...]
 
-    def generate_signals(self, ohlcv: pd.DataFrame, htf_ohlcv: pd.DataFrame | None = None) -> pd.Series:
-        """Target position state per bar: -1 (short), 0 (flat), 1 (long). htf_ohlcv is only used by
-        MTF Candidates (see strategies/mtf.py); single-timeframe candidates ignore it."""
+    def generate_signals(self, ohlcv: pd.DataFrame, supporting: dict[DataRequirement, pd.DataFrame] | None = None) -> pd.Series:
+        """Target position state per bar: -1 (short), 0 (flat), 1 (long). `supporting` holds exactly
+        the DataFrames named by this candidate's own `supporting_data`; a candidate that declares none
+        gets an empty dict and can ignore the parameter entirely."""
         ...
+
+
+def ensure_reference_market_resolvable(requirement: DataRequirement) -> None:
+    """Reference Market resolution isn't built yet (rule-set-expansion tickets 07-09). Shared by every
+    caller that walks a candidate's supporting_data — the Backtest (via resolve_supporting_data below)
+    and Paper Trading (paper/loop.py's update_member, which fetches live bars per requirement instead
+    of looking them up in an already-loaded dict, so it can't just call resolve_supporting_data itself)
+    — so a Market-Filtered Candidate fails identically everywhere instead of the two diverging."""
+    if requirement.reference_market is not None:
+        raise NotImplementedError(
+            f"Reference Market {requirement.reference_market!r} is not resolvable yet "
+            f"(Market Filters land in rule-set-expansion tickets 07-09)"
+        )
+
+
+def resolve_supporting_data(
+    candidate: StrategyCandidate, ohlcv_by_timeframe: dict[Timeframe, pd.DataFrame]
+) -> dict[DataRequirement, pd.DataFrame]:
+    """Builds the `supporting` dict generate_signals() expects, from whatever data is already loaded.
+    Used by the Backtest and Walk-Forward Validation so neither needs to know how an individual
+    candidate's requirements map to concrete data."""
+    resolved: dict[DataRequirement, pd.DataFrame] = {}
+    for requirement in getattr(candidate, "supporting_data", ()):
+        ensure_reference_market_resolvable(requirement)
+        if requirement.timeframe not in ohlcv_by_timeframe:
+            raise KeyError(
+                f"{candidate.name} needs {requirement.timeframe.value} data, but it wasn't loaded "
+                f"(available: {[tf.value for tf in ohlcv_by_timeframe]})"
+            )
+        resolved[requirement] = ohlcv_by_timeframe[requirement.timeframe]
+    return resolved
 
 
 def align_htf_signal(htf_signal: pd.Series, entry_index: pd.DatetimeIndex) -> pd.Series:

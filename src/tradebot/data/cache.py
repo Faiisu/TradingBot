@@ -24,6 +24,18 @@ def _cache_path(cache_dir: Path, symbol: str, timeframe: Timeframe) -> Path:
     return cache_dir / f"{symbol}_{timeframe.value}.parquet"
 
 
+def trim_to_common_window(data: dict) -> dict:
+    """Trims every series to the same start date (the latest of their individual starts), so
+    everything is compared over identical market conditions rather than some series getting a longer
+    history than others (real M5 data used to be the limiting factor before MT5's bar cap was raised).
+    Keyed generically (not just by Timeframe) so Market Filter Reference Market data can share this too."""
+    if not data:
+        return {}
+    common_start = max(df.index.min() for df in data.values())
+    print(f"Trimming to a common window starting {common_start} (the shortest available history)")
+    return {key: df.loc[df.index >= common_start] for key, df in data.items()}
+
+
 def load_ohlcv(
     timeframe: Timeframe,
     *,

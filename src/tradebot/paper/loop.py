@@ -7,7 +7,7 @@ import pandas as pd
 from tradebot.dashboard.state import build_state, write_state
 from tradebot.indicators import atr
 from tradebot.paper.simulated_broker import SimulatedBroker
-from tradebot.strategies.base import StrategyCandidate
+from tradebot.strategies.base import DataRequirement, StrategyCandidate, ensure_reference_market_resolvable
 from tradebot.timeframe import TIMEFRAME_SECONDS, Timeframe, to_mt5_timeframe
 
 DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
@@ -25,12 +25,12 @@ def decide_and_update(
     candidate: StrategyCandidate,
     broker: SimulatedBroker,
     recent_ohlcv: pd.DataFrame,
-    htf_ohlcv: pd.DataFrame | None = None,
+    supporting: dict[DataRequirement, pd.DataFrame] | None = None,
 ) -> float | None:
     """Returns the last close price processed, or None if there was no data to act on."""
     if len(recent_ohlcv) == 0:
         return None
-    signal_series = candidate.generate_signals(recent_ohlcv, htf_ohlcv)
+    signal_series = candidate.generate_signals(recent_ohlcv, supporting)
     atr_series = atr(recent_ohlcv["high"], recent_ohlcv["low"], recent_ohlcv["close"], period=broker.atr_period)
     last = recent_ohlcv.iloc[-1]
     last_close = float(last["close"])
@@ -94,9 +94,12 @@ def update_member(
     if last_bar_time is not None and bar_time <= last_bar_time:
         return False, last_bar_time, None
 
-    filter_timeframe = getattr(candidate, "filter_timeframe", None)
-    htf_recent = fetch_recent_bars(mt5_api, symbol, filter_timeframe, lookback_bars) if filter_timeframe else None
-    last_close = decide_and_update(candidate, broker, recent, htf_recent)
+    supporting: dict[DataRequirement, pd.DataFrame] = {}
+    for requirement in getattr(candidate, "supporting_data", ()):
+        ensure_reference_market_resolvable(requirement)
+        supporting[requirement] = fetch_recent_bars(mt5_api, symbol, requirement.timeframe, lookback_bars)
+
+    last_close = decide_and_update(candidate, broker, recent, supporting)
     return True, bar_time, last_close
 
 

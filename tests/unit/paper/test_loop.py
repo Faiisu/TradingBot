@@ -15,14 +15,16 @@ from tradebot.paper.loop import (
 )
 from tradebot.paper.simulated_broker import SimulatedBroker
 from tradebot.risk.risk_controls import RiskControls
+from tradebot.strategies.base import DataRequirement
 from tradebot.timeframe import Timeframe
 
 
 class _AlwaysLongStrategy:
     name = "always_long"
     timeframe = Timeframe.H1
+    supporting_data: tuple = ()
 
-    def generate_signals(self, ohlcv: pd.DataFrame, htf_ohlcv: pd.DataFrame | None = None) -> pd.Series:
+    def generate_signals(self, ohlcv: pd.DataFrame, supporting: dict | None = None) -> pd.Series:
         return pd.Series(1.0, index=ohlcv.index)
 
 
@@ -117,6 +119,64 @@ def test_member_key_distinguishes_timeframes():
             self.timeframe = timeframe
 
     assert member_key(_Candidate(Timeframe.M5)) != member_key(_Candidate(Timeframe.H1))
+
+
+def test_update_member_fetches_and_passes_through_declared_supporting_data():
+    """An MTF Candidate declares a DataRequirement; update_member must fetch that Timeframe's bars
+    too and pass them through generate_signals' `supporting` dict — not just its own Timeframe."""
+
+    class _RecordingMtfLikeCandidate:
+        name = "mtf_like"
+        timeframe = Timeframe.M15
+        supporting_data = (DataRequirement(timeframe=Timeframe.H1),)
+
+        def __init__(self):
+            self.seen_supporting = None
+
+        def generate_signals(self, ohlcv, supporting=None):
+            self.seen_supporting = supporting
+            return pd.Series(1.0, index=ohlcv.index)
+
+    class _TrackingFakeMt5(_FakeMt5):
+        def copy_rates_from_pos(self, symbol, timeframe, start_pos, count):
+            self.timeframes_requested = getattr(self, "timeframes_requested", [])
+            self.timeframes_requested.append(timeframe)
+            return super().copy_rates_from_pos(symbol, timeframe, start_pos, count)
+
+    fake = _TrackingFakeMt5()
+    candidate = _RecordingMtfLikeCandidate()
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
+
+    processed, _, _ = update_member(fake, "XAUUSD", candidate, broker, 40, last_bar_time=None)
+
+    assert processed is True
+    assert candidate.seen_supporting is not None
+    key = DataRequirement(timeframe=Timeframe.H1)
+    assert key in candidate.seen_supporting
+    assert not candidate.seen_supporting[key].empty
+    # both the entry Timeframe (M15) and the declared requirement (H1) were actually fetched from MT5
+    from tradebot.timeframe import to_mt5_timeframe
+
+    assert to_mt5_timeframe(Timeframe.M15) in fake.timeframes_requested
+    assert to_mt5_timeframe(Timeframe.H1) in fake.timeframes_requested
+
+
+def test_update_member_rejects_a_reference_market_requirement():
+    """A Market-Filtered Candidate isn't resolvable yet (rule-set-expansion tickets 07-09) — paper
+    trading must fail the same way the Backtest does (see test_reference_market_requirement_is_not_yet_resolvable
+    in tests/unit/strategies/test_base.py), via the one shared check, not its own copy."""
+
+    class _MarketFilteredLikeCandidate:
+        name = "market_filtered_like"
+        timeframe = Timeframe.M15
+        supporting_data = (DataRequirement(timeframe=Timeframe.H1, reference_market="DXY"),)
+
+        def generate_signals(self, ohlcv, supporting=None):
+            return pd.Series(1.0, index=ohlcv.index)
+
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
+    with pytest.raises(NotImplementedError, match="DXY"):
+        update_member(_FakeMt5(), "XAUUSD", _MarketFilteredLikeCandidate(), broker, 40, last_bar_time=None)
 
 
 def test_fetch_recent_bars_handles_no_data():
