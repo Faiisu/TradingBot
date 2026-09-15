@@ -126,6 +126,9 @@
     [/^donchian_breakout_(\d+)_(\d+)/, (m) => `Donchian Breakout ${m[1]}/${m[2]}`],
     [/^supertrend_(\d+)_([\d.]+)/, (m) => `Supertrend ${m[1]}×${m[2]}`],
     [/^adx_dmi_(\d+)/, (m) => `ADX/DMI ${m[1]}`],
+    [/^stochastic_reversion_(\d+)_(\d+)/, (m) => `Stochastic Reversion ${m[1]}/${m[2]}`],
+    [/^asian_range_breakout$/, () => `Asian Range Breakout`],
+    [/^volume_confirmed_breakout_(\d+)_(\d+)/, (m) => `Volume-Confirmed Breakout ${m[1]}/${m[2]}`],
   ];
 
   function ruleSetLabel(candidateName) {

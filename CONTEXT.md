@@ -65,7 +65,7 @@ Position sizing and stop-loss rules applied uniformly to every Strategy Candidat
 _Avoid_: money management, risk management (used too loosely elsewhere)
 
 **Broker**:
-The financial institution providing the MT5 account/server that the Trading Platform connects to. This project uses Exness.
+The financial institution providing the MT5 account/server that the Trading Platform connects to. This project uses Exness. Broker server time — every timestamp Backtest and Paper Trading see, including bar close times — is UTC, fixed year-round with no daylight-saving adjustment; anything reading a specific time of day (e.g. Asian Range Breakout's session boundaries) uses that server time directly, with no timezone conversion.
 _Avoid_: platform (see Trading Platform, which is distinct)
 
 **Timeframe**:

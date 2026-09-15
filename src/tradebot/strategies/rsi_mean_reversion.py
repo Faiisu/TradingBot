@@ -1,8 +1,7 @@
-import numpy as np
 import pandas as pd
 
 from tradebot.indicators import rsi
-from tradebot.strategies.base import DataRequirement
+from tradebot.strategies.base import DataRequirement, threshold_reversion_signals
 from tradebot.timeframe import Timeframe
 
 
@@ -17,23 +16,5 @@ class RsiMeanReversionStrategy:
         self.name = f"rsi_mean_reversion_{period}"
 
     def generate_signals(self, ohlcv: pd.DataFrame, supporting: dict[DataRequirement, pd.DataFrame] | None = None) -> pd.Series:
-        close = ohlcv["close"]
-        rsi_values = rsi(close, self.period).to_numpy()
-
-        signals = np.zeros(len(close))
-        state = 0
-        for i in range(len(rsi_values)):
-            r = rsi_values[i]
-            if np.isnan(r):
-                signals[i] = 0
-                continue
-            if r < self.oversold:
-                state = 1
-            elif r > self.overbought:
-                state = -1
-            elif state == 1 and r >= 50:
-                state = 0
-            elif state == -1 and r <= 50:
-                state = 0
-            signals[i] = state
-        return pd.Series(signals, index=close.index, name="signal")
+        rsi_values = rsi(ohlcv["close"], self.period)
+        return threshold_reversion_signals(rsi_values, self.oversold, self.overbought)

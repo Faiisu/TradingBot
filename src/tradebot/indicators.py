@@ -112,3 +112,15 @@ def adx_dmi(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14)
     dx = (100 * (plus_di - minus_di).abs() / di_sum.replace(0, float("nan"))).where(di_sum != 0, 0.0)
     adx = dx.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     return adx, plus_di, minus_di
+
+
+def stochastic(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int = 14, d_period: int = 3) -> tuple[pd.Series, pd.Series]:
+    """%K and %D. A zero-range window (high == low across the whole lookback) is undefined, not a real
+    extreme — reads as neutral (50), matching adx_dmi's "no direction" convention for the same kind of
+    degenerate bar."""
+    lowest_low = low.rolling(window=k_period).min()
+    highest_high = high.rolling(window=k_period).max()
+    band_range = highest_high - lowest_low
+    percent_k = (100 * (close - lowest_low) / band_range.replace(0, float("nan"))).where(band_range != 0, 50.0)
+    percent_d = percent_k.rolling(window=d_period).mean()
+    return percent_k, percent_d

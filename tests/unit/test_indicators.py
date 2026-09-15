@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from tradebot.indicators import adx_dmi, atr, bollinger_bands, donchian_channel, ema, macd, rsi, sma, supertrend
+from tradebot.indicators import adx_dmi, atr, bollinger_bands, donchian_channel, ema, macd, rsi, sma, stochastic, supertrend
 
 
 def test_sma_matches_manual_average():
@@ -69,6 +69,25 @@ def test_supertrend_direction_matches_a_clean_trend_then_reversal():
     assert direction.iloc[90] == 1  # deep in the uptrend
     assert direction.iloc[-1] == -1  # deep in the downtrend after the reversal
     assert set(direction.dropna().unique()).issubset({1, -1})  # no flat state
+
+
+def test_stochastic_bounds_and_extremes(oscillating_ohlcv):
+    percent_k, percent_d = stochastic(oscillating_ohlcv["high"], oscillating_ohlcv["low"], oscillating_ohlcv["close"], k_period=14, d_period=3)
+
+    valid_k = percent_k.dropna()
+    assert (valid_k >= 0).all() and (valid_k <= 100).all()
+    assert valid_k.max() > 80
+    assert valid_k.min() < 20
+
+    valid_d = percent_d.dropna()
+    assert (valid_d >= 0).all() and (valid_d <= 100).all()
+
+
+def test_stochastic_is_neutral_on_a_flat_series(flat_ohlcv):
+    percent_k, percent_d = stochastic(flat_ohlcv["high"], flat_ohlcv["low"], flat_ohlcv["close"], k_period=14, d_period=3)
+
+    # zero range (high == low) is undefined, not a real extreme — reads as neutral (50), not 0/100/NaN
+    assert (percent_k.dropna() == 50.0).all()
 
 
 def test_adx_dmi_plus_di_leads_in_a_steady_uptrend(trending_ohlcv):

@@ -56,7 +56,8 @@ def test_seconds_until_next_bar_close_matches_hand_calculation():
 
 
 class _FakeMt5:
-    """copy_rates_from_pos returning a fixed, growing bar series; records every start position requested."""
+    """copy_rates_from_pos returning a fixed, growing bar series (including tick_volume, matching
+    MT5's real rate dtype); records every start position requested."""
 
     def __init__(self, bars: int = 40):
         self.bars = bars
@@ -64,16 +65,21 @@ class _FakeMt5:
 
     def copy_rates_from_pos(self, symbol, timeframe, start_pos, count):
         self.start_positions.append(start_pos)
-        dtype = [("time", "i8"), ("open", "f8"), ("high", "f8"), ("low", "f8"), ("close", "f8")]
+        dtype = [("time", "i8"), ("open", "f8"), ("high", "f8"), ("low", "f8"), ("close", "f8"), ("tick_volume", "i8")]
         n = min(count, self.bars)
-        return np.array([(1000 + i * 900, 100.0 + i, 101.0 + i, 99.0 + i, 100.5 + i) for i in range(n)], dtype=dtype)
+        return np.array([(1000 + i * 900, 100.0 + i, 101.0 + i, 99.0 + i, 100.5 + i, 10 + i) for i in range(n)], dtype=dtype)
 
 
 def test_fetch_recent_bars_converts_rates_to_dataframe():
     df = fetch_recent_bars(_FakeMt5(), "XAUUSD", Timeframe.M15, count=5)
     assert len(df) == 5
-    assert list(df.columns) == ["open", "high", "low", "close"]
+    assert list(df.columns) == ["open", "high", "low", "close", "tick_volume"]
     assert df.index.is_monotonic_increasing
+
+
+def test_fetch_recent_bars_carries_tick_volume_through():
+    df = fetch_recent_bars(_FakeMt5(), "XAUUSD", Timeframe.M15, count=5)
+    assert list(df["tick_volume"]) == [10, 11, 12, 13, 14]
 
 
 def test_fetch_recent_bars_skips_the_bar_still_forming():

@@ -57,10 +57,10 @@ def fetch_recent_bars(mt5_api, symbol: str, timeframe: Timeframe, count: int) ->
     streaming/push callback, so the loop polls this after each bar close."""
     rates = mt5_api.copy_rates_from_pos(symbol, to_mt5_timeframe(timeframe), 1, count)
     if rates is None or len(rates) == 0:
-        return pd.DataFrame(columns=["open", "high", "low", "close"])
+        return pd.DataFrame(columns=["open", "high", "low", "close", "tick_volume"])
     df = pd.DataFrame(rates)
     df["time"] = pd.to_datetime(df["time"], unit="s")
-    return df.set_index("time")[["open", "high", "low", "close"]]
+    return df.set_index("time")[["open", "high", "low", "close", "tick_volume"]]
 
 
 def wait_or_stop(seconds: float, stop_path: Path | None, poll_seconds: float = 1.0) -> bool:
