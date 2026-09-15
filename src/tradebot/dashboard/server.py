@@ -70,6 +70,7 @@ def state():
                 "equity_history": [],
                 "members": [],
                 "recent_trades": [],
+                "worst_decision_latency_seconds": None,
             }
         )
     return JSONResponse(read_state(STATE_PATH))

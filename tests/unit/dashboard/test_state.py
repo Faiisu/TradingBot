@@ -87,6 +87,52 @@ def test_build_state_never_flags_a_member_with_no_staleness_tracked_reference_ma
     assert member["stale_data_age_business_days"] is None
 
 
+def test_build_state_reports_each_members_decision_latency():
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=100.0)
+    members = [(_StubCandidate("macd_12_26_9", Timeframe.H1), broker)]
+
+    state = build_state(
+        members, equity_history=[], recent_trades=[], last_close_by_member={},
+        decision_latency_seconds_by_member={"macd_12_26_9__H1": 12.5},
+    )
+
+    assert state["members"][0]["decision_latency_seconds"] == 12.5
+
+
+def test_build_state_reports_none_decision_latency_for_a_member_never_yet_processed():
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=100.0)
+    members = [(_StubCandidate("macd_12_26_9", Timeframe.H1), broker)]
+
+    state = build_state(members, equity_history=[], recent_trades=[], last_close_by_member={})
+
+    assert state["members"][0]["decision_latency_seconds"] is None
+
+
+def test_build_state_reports_the_worst_decision_latency_across_members():
+    broker_a = SimulatedBroker(risk_controls=RiskControls(), initial_equity=100.0)
+    broker_b = SimulatedBroker(risk_controls=RiskControls(), initial_equity=100.0)
+    members = [
+        (_StubCandidate("macd_12_26_9", Timeframe.H1), broker_a),
+        (_StubCandidate("ma_crossover_20_50", Timeframe.M5), broker_b),
+    ]
+
+    state = build_state(
+        members, equity_history=[], recent_trades=[], last_close_by_member={},
+        decision_latency_seconds_by_member={"macd_12_26_9__H1": 3.0, "ma_crossover_20_50__M5": 41.0},
+    )
+
+    assert state["worst_decision_latency_seconds"] == 41.0
+
+
+def test_build_state_worst_decision_latency_is_none_when_nothing_processed_yet():
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=100.0)
+    members = [(_StubCandidate("macd_12_26_9", Timeframe.H1), broker)]
+
+    state = build_state(members, equity_history=[], recent_trades=[], last_close_by_member={})
+
+    assert state["worst_decision_latency_seconds"] is None
+
+
 def test_write_and_read_state_round_trips(tmp_path):
     state = {"updated_at": "now", "total_equity": 123.45, "members": [], "recent_trades": [], "equity_history": []}
     path = tmp_path / "paper_state.json"

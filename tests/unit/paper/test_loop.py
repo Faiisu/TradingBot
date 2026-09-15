@@ -1,5 +1,5 @@
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -7,22 +7,41 @@ import pytest
 
 from tradebot.paper.loop import (
     decide_and_update,
+    decision_latency_seconds,
     fetch_recent_bars,
     member_key,
+    missed_nominal_closes,
+    nominal_bar_close,
+    run_tick,
     seconds_until_next_bar_close,
+    timeframe_closed_at,
     update_member,
     wait_or_stop,
 )
 from tradebot.paper.simulated_broker import SimulatedBroker
 from tradebot.risk.risk_controls import RiskControls
 from tradebot.strategies.base import DataRequirement
-from tradebot.timeframe import Timeframe
+from tradebot.timeframe import TIMEFRAME_SECONDS, Timeframe
 
 
 class _AlwaysLongStrategy:
     name = "always_long"
     timeframe = Timeframe.H1
     supporting_data: tuple = ()
+
+    def generate_signals(self, ohlcv: pd.DataFrame, supporting: dict | None = None) -> pd.Series:
+        return pd.Series(1.0, index=ohlcv.index)
+
+
+class _AlwaysLongCandidate:
+    """Like _AlwaysLongStrategy, but with a configurable name/timeframe — needed to build several
+    members that differ only in Timeframe for the alignment tests below."""
+
+    supporting_data: tuple = ()
+
+    def __init__(self, name: str, timeframe: Timeframe):
+        self.name = name
+        self.timeframe = timeframe
 
     def generate_signals(self, ohlcv: pd.DataFrame, supporting: dict | None = None) -> pd.Series:
         return pd.Series(1.0, index=ohlcv.index)
@@ -270,3 +289,196 @@ def test_fetch_recent_bars_handles_no_data():
 
     df = fetch_recent_bars(_EmptyMt5(), "XAUUSD", Timeframe.M15, count=5)
     assert df.empty
+
+
+# ---------------------------------------------------------------------------
+# Ticket 01: members act on their own Timeframe's real wall-clock close, not on a loop-local tick
+# counter that drifts with whatever moment the loop happened to start.
+# ---------------------------------------------------------------------------
+
+
+def test_nominal_bar_close_rounds_down_to_the_smallest_timeframes_boundary():
+    # 1_726_000_200 % 300 == 0 already (a true M5 boundary) — pick a moment 47s into that bar to
+    # prove rounding-down, not just echoing an already-aligned instant.
+    now = datetime.fromtimestamp(1_726_000_200 + 47, tz=timezone.utc)
+    nominal = nominal_bar_close(now, Timeframe.M5)
+    assert nominal.timestamp() == 1_726_000_200
+    assert nominal.timestamp() % TIMEFRAME_SECONDS[Timeframe.M5] == 0
+
+
+def test_nominal_bar_close_is_idempotent_on_an_exact_boundary():
+    now = datetime.fromtimestamp(1_726_000_200, tz=timezone.utc)
+    assert nominal_bar_close(now, Timeframe.M5).timestamp() == 1_726_000_200
+
+
+def test_timeframe_closed_at_true_only_for_boundaries_shared_with_the_larger_timeframe():
+    h1_boundary = datetime.fromtimestamp(1_726_002_000, tz=timezone.utc)  # multiple of 3600
+    assert h1_boundary.timestamp() % 3600 == 0
+    non_h1_m5_boundary = datetime.fromtimestamp(1_726_002_000 + 300, tz=timezone.utc)  # +5min, not /3600
+    assert non_h1_m5_boundary.timestamp() % 3600 != 0
+
+    assert timeframe_closed_at(Timeframe.H1, h1_boundary) is True
+    assert timeframe_closed_at(Timeframe.H1, non_h1_m5_boundary) is False
+    # every smallest-Timeframe boundary is trivially one of its own Timeframe's boundaries
+    assert timeframe_closed_at(Timeframe.M5, non_h1_m5_boundary) is True
+
+
+def test_h1_boundaries_land_on_exact_epoch_multiples_regardless_of_where_the_scan_starts():
+    """Regression test for the original bug: a loop-local tick counter starting at whatever moment the
+    loop happened to launch could make an H1 member fire up to 55 minutes after the real H1 close.
+    Wall-clock alignment has no notion of a "start" at all — scanning any run of real M5 boundaries
+    must flag exactly the ones that are true multiples of 3600s, however that run of ticks happens to
+    be lined up against the clock."""
+    for start_epoch in (1_726_000_000, 1_726_000_037, 1_726_000_122, 1_726_000_299):
+        first_m5_boundary = start_epoch - (start_epoch % 300) + 300
+        fired = []
+        for i in range(24):  # 2 hours of M5 ticks
+            now = datetime.fromtimestamp(first_m5_boundary + i * 300, tz=timezone.utc)
+            nominal = nominal_bar_close(now, Timeframe.M5)
+            if timeframe_closed_at(Timeframe.H1, nominal):
+                fired.append(int(nominal.timestamp()))
+        assert fired, f"no H1 boundary detected starting from offset {start_epoch}"
+        assert all(t % 3600 == 0 for t in fired)
+
+
+def test_run_tick_updates_only_members_whose_own_timeframe_closed_this_tick():
+    fake = _FakeMt5()
+    m5_broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
+    h1_broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
+    members = [
+        (_AlwaysLongCandidate("m5cand", Timeframe.M5), m5_broker),
+        (_AlwaysLongCandidate("h1cand", Timeframe.H1), h1_broker),
+    ]
+    last_bar_time_by_member: dict = {}
+    decision_latency_by_member: dict = {}
+
+    # An M5 boundary that is deliberately NOT an H1 boundary.
+    non_h1_tick = datetime.fromtimestamp(1_726_002_000 + 300, tz=timezone.utc)
+    assert non_h1_tick.timestamp() % 3600 != 0
+    run_tick(
+        non_h1_tick, non_h1_tick, fake, "XAUUSD", members, 40,
+        last_bar_time_by_member, decision_latency_by_member, {}, [],
+    )
+
+    assert m5_broker.position is not None
+    assert h1_broker.position is None  # not due yet — this is exactly the bug ticket 01 fixes
+
+    # The next true H1 boundary: now H1 must be updated too.
+    h1_tick = datetime.fromtimestamp(1_726_005_600, tz=timezone.utc)  # a multiple of 3600
+    assert h1_tick.timestamp() % 3600 == 0
+    run_tick(
+        h1_tick, h1_tick, fake, "XAUUSD", members, 40,
+        last_bar_time_by_member, decision_latency_by_member, {}, [],
+    )
+    assert h1_broker.position is not None
+
+
+def test_run_tick_records_decision_latency_after_processing():
+    fake = _FakeMt5()
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
+    candidate = _AlwaysLongCandidate("m5cand", Timeframe.M5)
+    last_bar_time_by_member: dict = {}
+    decision_latency_by_member: dict = {}
+
+    now = datetime.fromtimestamp(1_726_000_200, tz=timezone.utc)
+    run_tick(
+        now, now, fake, "XAUUSD", [(candidate, broker)], 40,
+        last_bar_time_by_member, decision_latency_by_member, {}, [],
+    )
+
+    key = member_key(candidate)
+    assert key in decision_latency_by_member
+    assert decision_latency_by_member[key] > 0
+
+
+def test_run_tick_skips_already_processed_bars_without_recording_new_latency():
+    fake = _FakeMt5()
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
+    candidate = _AlwaysLongCandidate("m5cand", Timeframe.M5)
+    last_bar_time_by_member: dict = {}
+    decision_latency_by_member: dict = {}
+
+    now = datetime.fromtimestamp(1_726_000_200, tz=timezone.utc)
+    run_tick(now, now, fake, "XAUUSD", [(candidate, broker)], 40, last_bar_time_by_member, decision_latency_by_member, {}, [])
+    first_latency = decision_latency_by_member[member_key(candidate)]
+
+    later = datetime.fromtimestamp(1_726_000_500, tz=timezone.utc)  # market closed: same final bar
+    run_tick(later, later, fake, "XAUUSD", [(candidate, broker)], 40, last_bar_time_by_member, decision_latency_by_member, {}, [])
+
+    assert decision_latency_by_member[member_key(candidate)] == first_latency
+
+
+def test_run_tick_uses_the_nominal_close_for_gating_but_now_for_latency():
+    """The catch-up scheduler (missed_nominal_closes) can hand run_tick a `nominal_close` earlier than
+    the actual wall-clock `now` it's processed at — e.g. a slow iteration made the loop late. Gating
+    (which members are due) must use the boundary being caught up on, but the reported decision latency
+    must reflect how late it *actually* ran, so a slow-processing incident shows up on the dashboard
+    instead of being hidden by pretending it ran on time."""
+
+    class _BarsEndingAtMt5:
+        """Enough bars (for a non-NaN ATR) ending exactly at `last_bar_epoch`."""
+
+        def __init__(self, last_bar_epoch, count=20, spacing=3600):
+            self.last_bar_epoch = last_bar_epoch
+            self.count = count
+            self.spacing = spacing
+
+        def copy_rates_from_pos(self, symbol, timeframe, start_pos, count):
+            dtype = [("time", "i8"), ("open", "f8"), ("high", "f8"), ("low", "f8"), ("close", "f8"), ("tick_volume", "i8")]
+            start = self.last_bar_epoch - (self.count - 1) * self.spacing
+            return np.array(
+                [(start + i * self.spacing, 100.0 + i, 101.0 + i, 99.0 + i, 100.5 + i, 10) for i in range(self.count)],
+                dtype=dtype,
+            )
+
+    stale_h1_boundary = datetime.fromtimestamp(1_726_005_600, tz=timezone.utc)  # a true H1 boundary
+    actually_ran_at = stale_h1_boundary + timedelta(seconds=400)  # processed 400s late
+    fake = _BarsEndingAtMt5(int(stale_h1_boundary.timestamp()))
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
+    candidate = _AlwaysLongCandidate("h1cand", Timeframe.H1)
+    decision_latency_by_member: dict = {}
+
+    run_tick(actually_ran_at, stale_h1_boundary, fake, "XAUUSD", [(candidate, broker)], 40, {}, decision_latency_by_member, {}, [])
+
+    assert broker.position is not None  # gated on the H1 boundary, so it did fire
+    key = member_key(candidate)
+    assert decision_latency_by_member[key] == pytest.approx(400.0)
+
+
+def test_decision_latency_seconds_handles_a_timezone_naive_bar_time():
+    bar_time = pd.Timestamp(1_726_000_000, unit="s")  # naive, as produced by fetch_recent_bars
+    decided_at = datetime.fromtimestamp(1_726_000_030, tz=timezone.utc)
+    assert decision_latency_seconds(bar_time, decided_at) == pytest.approx(30.0)
+
+
+# ---------------------------------------------------------------------------
+# missed_nominal_closes: catch-up when an iteration runs later than one smallest-Timeframe interval,
+# so a larger Timeframe's boundary is processed (possibly late) instead of silently skipped forever.
+# ---------------------------------------------------------------------------
+
+
+def test_missed_nominal_closes_returns_only_current_when_nothing_was_missed():
+    previous = datetime.fromtimestamp(1_726_000_200, tz=timezone.utc)
+    current = datetime.fromtimestamp(1_726_000_500, tz=timezone.utc)  # exactly one M5 step later
+    assert missed_nominal_closes(previous, current, Timeframe.M5) == [current]
+
+
+def test_missed_nominal_closes_returns_current_when_there_is_no_previous_tick():
+    current = datetime.fromtimestamp(1_726_000_200, tz=timezone.utc)
+    assert missed_nominal_closes(None, current, Timeframe.M5) == [current]
+
+
+def test_missed_nominal_closes_backfills_every_boundary_skipped_by_a_slow_iteration():
+    previous = datetime.fromtimestamp(1_726_000_200, tz=timezone.utc)
+    current = datetime.fromtimestamp(1_726_000_200 + 300 * 3, tz=timezone.utc)  # 2 boundaries skipped
+    result = missed_nominal_closes(previous, current, Timeframe.M5)
+    assert result == [previous + timedelta(seconds=300), previous + timedelta(seconds=600), current]
+
+
+def test_missed_nominal_closes_caps_catch_up_after_a_long_gap():
+    previous = datetime.fromtimestamp(1_726_000_200, tz=timezone.utc)
+    current = previous + timedelta(seconds=300 * 200)  # e.g. the machine slept for ~16.7 hours
+    result = missed_nominal_closes(previous, current, Timeframe.M5, max_catch_up=12)
+    assert len(result) == 12
+    assert result[-1] == current  # always ends on the real current boundary
+    assert all((result[i + 1] - result[i]).total_seconds() == 300 for i in range(len(result) - 1))

@@ -14,8 +14,10 @@ def build_state(
     last_close_by_member: dict[str, float],
     session_started_at: str | None = None,
     reference_market_age_business_days: dict[str, int] | None = None,
+    decision_latency_seconds_by_member: dict[str, float] | None = None,
 ) -> dict:
     reference_market_age_business_days = reference_market_age_business_days or {}
+    decision_latency_seconds_by_member = decision_latency_seconds_by_member or {}
     total_equity = sum(broker.equity for _, broker in members)
     total_initial = sum(broker.initial_equity for _, broker in members)
 
@@ -62,8 +64,13 @@ def build_state(
                 "trade_count": len(broker.trades),
                 "held_back_by_stale_data": held_back_by_stale_data,
                 "stale_data_age_business_days": stale_data_age_business_days,
+                "decision_latency_seconds": decision_latency_seconds_by_member.get(f"{candidate.name}__{candidate.timeframe.value}"),
             }
         )
+
+    # The worst (highest) decision latency across members — surfaced so a delay like ticket 01's bug
+    # (a member firing minutes after its own bar closed) is visible on the dashboard instead of silent.
+    worst_decision_latency_seconds = max(decision_latency_seconds_by_member.values(), default=None)
 
     return {
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -74,6 +81,7 @@ def build_state(
         "equity_history": equity_history[-MAX_EQUITY_HISTORY:],
         "members": member_states,
         "recent_trades": recent_trades[-MAX_RECENT_TRADES:],
+        "worst_decision_latency_seconds": worst_decision_latency_seconds,
     }
 
 

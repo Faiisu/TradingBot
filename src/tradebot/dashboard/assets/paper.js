@@ -176,12 +176,14 @@
     const closedTrades = members.reduce((sum, m) => sum + m.trade_count, 0);
     const timeframes = new Set(members.map((m) => m.timeframe));
 
+    const worstLatency = data.worst_decision_latency_seconds;
     $('stats').innerHTML = [
       ['Total equity', `$${num(data.total_equity)}`, `started at $${num(data.total_initial_equity)}`],
       ['Return', `<span class="${signClass(data.total_return_pct)}">${pct(data.total_return_pct)}</span>`, 'closed trades only'],
       ['Members', num(members.length, 0), `${timeframes.size} timeframe${timeframes.size === 1 ? '' : 's'}`],
       ['Open positions', num(open.length, 0), `${openLong} long · ${open.length - openLong} short`],
       ['Closed trades', num(closedTrades, 0), `${num(data.equity_history.length, 0)} state snapshots`],
+      ['Worst decision latency', worstLatency != null ? `${num(worstLatency, 1)}s` : '—', 'slowest member, after its own bar closed'],
     ]
       .map(([label, value, sub]) => `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value">${value}</div><div class="stat-sub">${sub}</div></div>`)
       .join('');

@@ -1,5 +1,5 @@
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -53,6 +53,56 @@ def decide_and_update(
 def seconds_until_next_bar_close(timeframe: Timeframe, now: datetime) -> float:
     interval = TIMEFRAME_SECONDS[timeframe]
     return interval - (now.timestamp() % interval)
+
+
+def nominal_bar_close(now: datetime, smallest: Timeframe) -> datetime:
+    """The wall-clock close time of the most recently completed `smallest`-Timeframe bar as of `now`
+    (run_paper_trading_loop calls this within buffer_seconds of that close). Every Timeframe closes
+    only at multiples of its own length in seconds since the epoch, and every larger Timeframe in use
+    is an exact multiple of `smallest` — so rounding `now` down to this one boundary, and comparing
+    against it (see timeframe_closed_at), tells each member whether this is one of its own bar closes
+    without counting how many outer-loop iterations have run since the loop happened to start. Ticket
+    01: that counting is what let an H1 member fire up to 55 minutes late, depending on the arbitrary
+    moment the loop was launched."""
+    seconds_into_bar = now.timestamp() % TIMEFRAME_SECONDS[smallest]
+    return now - timedelta(seconds=seconds_into_bar)
+
+
+def timeframe_closed_at(timeframe: Timeframe, nominal_close: datetime) -> bool:
+    """Whether `nominal_close` (a smallest-Timeframe boundary from nominal_bar_close) is also one of
+    `timeframe`'s own boundaries."""
+    return nominal_close.timestamp() % TIMEFRAME_SECONDS[timeframe] == 0
+
+
+def missed_nominal_closes(
+    previous: datetime | None, current: datetime, smallest: Timeframe, max_catch_up: int = 12
+) -> list[datetime]:
+    """Every smallest-Timeframe boundary from just after `previous` up to and including `current`.
+    Normally that's just `[current]` — but if one iteration of the loop ran long enough (a slow MT5
+    call, a GC pause) that wall-clock time crossed more than one smallest-Timeframe boundary before the
+    next iteration checked, using only `current` would silently skip whichever boundaries fell in
+    between — permanently, for any larger Timeframe whose own boundary was among them, since the next
+    check for it is up to a full Timeframe length later. Backfilling those boundaries here means a
+    larger-Timeframe member still gets processed (late, with that lateness visible via
+    decision_latency_seconds) instead of never at all. Capped at `max_catch_up` (nearest `current`) so
+    a long gap — the machine suspended, not just one slow tick — doesn't replay hours of stale ticks."""
+    step = TIMEFRAME_SECONDS[smallest]
+    if previous is None:
+        return [current]
+    elapsed_steps = round((current.timestamp() - previous.timestamp()) / step)
+    if elapsed_steps <= 1:
+        return [current]
+    elapsed_steps = min(elapsed_steps, max_catch_up)
+    return [current - timedelta(seconds=step * i) for i in range(elapsed_steps - 1, -1, -1)]
+
+
+def decision_latency_seconds(bar_time: pd.Timestamp, decided_at: datetime) -> float:
+    """Seconds between a bar's own close time and the moment it was actually decided on — surfaced on
+    the dashboard so a delay like ticket 01's bug is visible instead of silent. `bar_time` comes from
+    fetch_recent_bars as a timezone-naive Timestamp built from MT5's UTC epoch seconds; it is treated
+    as UTC, matching broker server time (see CONTEXT.md)."""
+    bar_time_utc = bar_time.tz_localize("UTC") if bar_time.tzinfo is None else bar_time.tz_convert("UTC")
+    return (pd.Timestamp(decided_at) - bar_time_utc).total_seconds()
 
 
 def fetch_recent_bars(mt5_api, symbol: str, timeframe: Timeframe, count: int) -> pd.DataFrame:
@@ -153,6 +203,71 @@ def update_member(
     return True, bar_time, last_close, reference_market_ages
 
 
+def run_tick(
+    now: datetime,
+    nominal_close: datetime,
+    mt5_api,
+    symbol: str,
+    members: list[tuple[StrategyCandidate, SimulatedBroker]],
+    lookback_bars: int,
+    last_bar_time_by_member: dict[str, pd.Timestamp],
+    decision_latency_by_member: dict[str, float],
+    reference_market_age_business_days: dict[str, int],
+    recent_trades: list[dict],
+    last_close_by_member: dict[str, float] | None = None,
+) -> None:
+    """Updates every member whose own Timeframe closed a bar as of `nominal_close` — a smallest-
+    Timeframe boundary decided by wall-clock alignment (nominal_bar_close/timeframe_closed_at) rather
+    than by counting how many wake-ups have happened since the loop started (see ticket 01).
+    `nominal_close` and `now` (the actual wall-clock moment this runs) are separate parameters because
+    the catch-up scheduler (missed_nominal_closes) can call this once per boundary a slow iteration
+    skipped past — gating uses `nominal_close`, but decision_latency_seconds is measured against the
+    real `now`, so a slow-processing incident is visible on the dashboard instead of hidden. Mutates
+    last_bar_time_by_member, decision_latency_by_member, reference_market_age_business_days,
+    recent_trades and last_close_by_member in place."""
+    last_close_by_member = {} if last_close_by_member is None else last_close_by_member
+
+    for candidate, broker in members:
+        if not timeframe_closed_at(candidate.timeframe, nominal_close):
+            continue
+        key = member_key(candidate)
+        trades_before = len(broker.trades)
+        processed, bar_time, last_close, reference_market_ages = update_member(
+            mt5_api, symbol, candidate, broker, lookback_bars, last_bar_time_by_member.get(key)
+        )
+        if not processed:
+            print(f"[{now.isoformat()}] {key}: no new closed bar, skipped", flush=True)
+            continue
+        last_bar_time_by_member[key] = bar_time
+        decision_latency_by_member[key] = decision_latency_seconds(bar_time, now)
+        reference_market_age_business_days.update(reference_market_ages)
+        if last_close is not None:
+            last_close_by_member[key] = last_close
+        if len(broker.trades) > trades_before:
+            new_trade = broker.trades[-1]
+            recent_trades.append(
+                {
+                    "candidate_name": candidate.name,
+                    "timeframe": candidate.timeframe.value,
+                    "direction": new_trade.direction,
+                    "entry_time": str(new_trade.entry_time),
+                    "exit_time": str(new_trade.exit_time),
+                    "entry_price": new_trade.entry_price,
+                    "exit_price": new_trade.exit_price,
+                    "pnl_pct": new_trade.pnl_pct * 100,
+                    "exit_reason": new_trade.exit_reason,
+                }
+            )
+
+        position_state = "flat" if broker.position is None else f"direction={broker.position.direction}"
+        print(
+            f"[{now.isoformat()}] {key} bar {bar_time}: "
+            f"equity={broker.equity:.4f}, {position_state}, trades={len(broker.trades)}, "
+            f"decision_latency={decision_latency_by_member[key]:.1f}s",
+            flush=True,
+        )
+
+
 def run_paper_trading_loop(
     mt5_api,
     symbol: str,
@@ -163,8 +278,8 @@ def run_paper_trading_loop(
     stop_path: Path | None = DEFAULT_STOP_PATH,
 ) -> None:
     """Polls the smallest timeframe in use for each newly closed bar, and updates every Ensemble member
-    whose timeframe just closed a bar too (a multiple of the smallest). Runs until interrupted (Ctrl+C) or
-    until stop_path appears (the dashboard's Stop button — see paper/supervisor.py). Never places a real
+    whose own timeframe closed a bar too, via run_tick. Runs until interrupted (Ctrl+C) or until
+    stop_path appears (the dashboard's Stop button — see paper/supervisor.py). Never places a real
     order — every update below is SimulatedBroker bookkeeping only.
 
     Writes state_path at startup and after every tick so a separate dashboard process can read and display
@@ -183,6 +298,7 @@ def run_paper_trading_loop(
     recent_trades: list[dict] = []
     last_close_by_member: dict[str, float] = {}
     last_bar_time_by_member: dict[str, pd.Timestamp] = {}
+    decision_latency_by_member: dict[str, float] = {}
     reference_market_age_business_days: dict[str, int] = {}
 
     def save_state() -> None:
@@ -190,60 +306,43 @@ def run_paper_trading_loop(
             {"time": datetime.now(timezone.utc).isoformat(), "equity": sum(broker.equity for _, broker in members)}
         )
         state = build_state(
-            members, equity_history, recent_trades, last_close_by_member, session_started_at, reference_market_age_business_days
+            members,
+            equity_history,
+            recent_trades,
+            last_close_by_member,
+            session_started_at,
+            reference_market_age_business_days,
+            decision_latency_by_member,
         )
         write_state(state, state_path)
 
     save_state()
 
-    tick = 0
+    last_nominal_close: datetime | None = None
     try:
         while True:
             sleep_seconds = seconds_until_next_bar_close(smallest, datetime.now(timezone.utc)) + buffer_seconds
             if wait_or_stop(sleep_seconds, stop_path):
                 print("Stop requested — exiting cleanly.", flush=True)
                 break
-            tick += 1
 
-            for candidate, broker in members:
-                multiple = TIMEFRAME_SECONDS[candidate.timeframe] // TIMEFRAME_SECONDS[smallest]
-                if tick % multiple != 0:
-                    continue
-                key = member_key(candidate)
-                trades_before = len(broker.trades)
-                processed, bar_time, last_close, reference_market_ages = update_member(
-                    mt5_api, symbol, candidate, broker, lookback_bars, last_bar_time_by_member.get(key)
+            now = datetime.now(timezone.utc)
+            current_nominal_close = nominal_bar_close(now, smallest)
+            for nominal_close in missed_nominal_closes(last_nominal_close, current_nominal_close, smallest):
+                run_tick(
+                    now,
+                    nominal_close,
+                    mt5_api,
+                    symbol,
+                    members,
+                    lookback_bars,
+                    last_bar_time_by_member,
+                    decision_latency_by_member,
+                    reference_market_age_business_days,
+                    recent_trades,
+                    last_close_by_member,
                 )
-                if not processed:
-                    print(f"[{datetime.now(timezone.utc).isoformat()}] {key}: no new closed bar, skipped", flush=True)
-                    continue
-                last_bar_time_by_member[key] = bar_time
-                reference_market_age_business_days.update(reference_market_ages)
-                if last_close is not None:
-                    last_close_by_member[key] = last_close
-                if len(broker.trades) > trades_before:
-                    new_trade = broker.trades[-1]
-                    recent_trades.append(
-                        {
-                            "candidate_name": candidate.name,
-                            "timeframe": candidate.timeframe.value,
-                            "direction": new_trade.direction,
-                            "entry_time": str(new_trade.entry_time),
-                            "exit_time": str(new_trade.exit_time),
-                            "entry_price": new_trade.entry_price,
-                            "exit_price": new_trade.exit_price,
-                            "pnl_pct": new_trade.pnl_pct * 100,
-                            "exit_reason": new_trade.exit_reason,
-                        }
-                    )
-
-                position_state = "flat" if broker.position is None else f"direction={broker.position.direction}"
-                print(
-                    f"[{datetime.now(timezone.utc).isoformat()}] {key} bar {bar_time}: "
-                    f"equity={broker.equity:.4f}, {position_state}, trades={len(broker.trades)}",
-                    flush=True,
-                )
-
+            last_nominal_close = current_nominal_close
             save_state()
     finally:
         save_state()
