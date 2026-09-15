@@ -142,6 +142,122 @@ def test_reentry_loop_never_reads_past_the_segments_own_end(risk_controls):
     assert all(t.exit_time <= ohlcv.index[21] for t in result.trades)
 
 
+def test_trailing_stop_exits_on_a_pullback_from_the_peak_while_still_profitable():
+    """rule-set-expansion phase-1 ticket 06: bounds the winning side the same way the fixed stop bounds
+    the losing side. Constant-true-range warmup (band=0, closes alternating +1/-1) lets ATR converge to
+    a known value (2.0) before entry, so the trailing level can be checked exactly via the same
+    (independently unit-tested in test_risk_controls.py) RiskControls.trailing_stop_price formula —
+    this test's job is only to confirm the engine wires atr_at_entry and the running peak into that
+    formula correctly, bar by bar, not to re-derive the formula itself."""
+    from tradebot.indicators import atr as atr_indicator
+
+    warmup = np.tile([101.0, 99.0], 30)  # constant true range = 2.0/bar (band=0) -> ATR converges to ~2.0
+    rally = np.linspace(103.0, 180.0, 20)  # steady rally to a peak of 180
+    pullback = np.array([170.0, 160.0, 150.0, 150.0, 150.0])  # sharp pullback below the trailing level
+    close = np.concatenate([warmup, rally, pullback])
+    ohlcv = _ohlcv(close, band=0.0)
+
+    controls = RiskControls(risk_pct_per_trade=0.01, atr_stop_multiplier=2.0, max_position_fraction=5.0, trailing_stop_multiplier=2.0)
+    engine = BacktestEngine(risk_controls=controls)
+    result = engine.run(_AlwaysLongAfterWarmupStrategy(Timeframe.H1, warmup=len(warmup)), ohlcv)
+
+    entry_idx = len(warmup)
+    atr_at_entry = atr_indicator(ohlcv["high"], ohlcv["low"], ohlcv["close"], period=engine.atr_period).iloc[entry_idx]
+    expected_exit_price = controls.trailing_stop_price(entry_price=close[entry_idx], atr_at_entry=atr_at_entry, direction=1, extreme_price=180.0)
+
+    trade = result.trades[0]
+    assert trade.exit_reason == "trailing_stop"
+    assert trade.exit_price == pytest.approx(expected_exit_price, abs=0.05)
+    assert trade.exit_price == trade.stop_price  # the trailing level in effect at exit, same convention as a fixed stop-loss
+    assert trade.pnl_pct > 0  # exited well above entry, despite pulling back from the peak
+
+
+def test_trailing_stop_never_loosens_after_an_interim_pullback_that_does_not_hit_it():
+    """A dip that doesn't breach the trail must not reset the tracked peak — the next rally's trail
+    still measures from the ORIGINAL higher peak, never from the interim low."""
+    warmup = np.tile([101.0, 99.0], 30)
+    first_rally = np.linspace(103.0, 140.0, 15)  # peak at 140
+    shallow_dip = np.linspace(139.0, 137.0, 5)  # dips a little, not enough to hit a trail from 140
+    second_rally = np.linspace(138.0, 200.0, 15)  # new peak at 200
+    crash = np.array([190.0, 170.0, 150.0, 150.0, 150.0])  # crashes hard, well past a trail from either peak
+    close = np.concatenate([warmup, first_rally, shallow_dip, second_rally, crash])
+    ohlcv = _ohlcv(close, band=0.0)
+
+    controls = RiskControls(risk_pct_per_trade=0.01, atr_stop_multiplier=2.0, max_position_fraction=5.0, trailing_stop_multiplier=2.0)
+    engine = BacktestEngine(risk_controls=controls)
+    result = engine.run(_AlwaysLongAfterWarmupStrategy(Timeframe.H1, warmup=len(warmup)), ohlcv)
+
+    trade = result.trades[0]
+    assert trade.exit_reason == "trailing_stop"
+    # the trail that finally triggered must reflect the 200 peak, not the earlier 140 peak or the dip
+    assert trade.exit_price > 180.0
+
+
+def test_profit_target_exits_exactly_at_n_times_the_initial_risk():
+    from tradebot.indicators import atr as atr_indicator
+
+    warmup = np.tile([100.2, 99.8], 10)  # 20 bars of oscillation
+    rally = np.full(10, 110.0)  # far enough above entry to guarantee the target is crossed
+    close = np.concatenate([warmup, rally])
+    ohlcv = _ohlcv(close, band=0.2)
+
+    # entry partway through the oscillation (bar 14, once ATR's 14-period warmup is satisfied), so the
+    # rally afterward is a genuine favorable move away from the entry price, not flat from bar one
+    entry_warmup = 14
+    controls = RiskControls(risk_pct_per_trade=0.01, atr_stop_multiplier=2.0, max_position_fraction=5.0, profit_target_r_multiple=1.0)
+    engine = BacktestEngine(risk_controls=controls)
+    result = engine.run(_AlwaysLongAfterWarmupStrategy(Timeframe.H1, warmup=entry_warmup), ohlcv)
+
+    entry_idx = entry_warmup
+    atr_at_entry = atr_indicator(ohlcv["high"], ohlcv["low"], ohlcv["close"], period=engine.atr_period).iloc[entry_idx]
+    expected_target = controls.profit_target_price(entry_price=close[entry_idx], atr_at_entry=atr_at_entry, direction=1)
+
+    trade = result.trades[0]
+    assert trade.exit_reason == "profit_target"
+    assert trade.exit_price == pytest.approx(expected_target, abs=0.01)
+    assert trade.pnl_pct > 0
+
+
+def test_stop_loss_takes_priority_over_profit_target_when_both_could_trigger_the_same_bar():
+    """No intrabar sequencing is available (only OHLC), so a bar whose range spans both the stop and the
+    target is resolved conservatively: the stop-loss (the risk-defining boundary) is checked first."""
+    warmup = np.tile([100.2, 99.8], 10)
+    wide_bar_close = np.array([100.0])
+    close = np.concatenate([warmup, wide_bar_close])
+    index = pd.date_range("2024-01-01", periods=len(close), freq="h")
+    ohlcv = pd.DataFrame(
+        {
+            "open": close,
+            "high": np.concatenate([close[:-1] + 0.2, [200.0]]),  # last bar's range spans both target and stop
+            "low": np.concatenate([close[:-1] - 0.2, [50.0]]),
+            "close": close,
+        },
+        index=index,
+    )
+
+    controls = RiskControls(
+        risk_pct_per_trade=0.01, atr_stop_multiplier=2.0, max_position_fraction=5.0, profit_target_r_multiple=1.0
+    )
+    engine = BacktestEngine(risk_controls=controls)
+    # entry partway through the oscillation (bar 14) so the segment still has bars left to reach the
+    # final wide bar, rather than entry and the wide bar being the same single-bar segment
+    result = engine.run(_AlwaysLongAfterWarmupStrategy(Timeframe.H1, warmup=14), ohlcv)
+
+    trade = result.trades[0]
+    assert trade.exit_reason == "stop_loss"
+
+
+def test_bounding_mechanisms_disabled_by_default_leave_engine_behavior_unchanged(risk_controls):
+    """Regression guard: with trailing_stop_multiplier and profit_target_r_multiple left at their
+    default None, the engine's behavior must be byte-identical to before ticket 06."""
+    close = np.concatenate([np.full(20, 100.0), np.linspace(100, 160, 40)])
+    ohlcv = _ohlcv(close)
+    result = BacktestEngine(risk_controls=risk_controls).run(_AlwaysLongAfterWarmupStrategy(Timeframe.H1), ohlcv)
+
+    assert len(result.trades) == 1
+    assert result.trades[0].exit_reason == "signal_change"
+
+
 def test_engine_runs_an_mtf_candidate_via_the_supporting_data_channel(risk_controls):
     from tradebot.strategies.base import DataRequirement
     from tradebot.strategies.mtf import MtfCandidate

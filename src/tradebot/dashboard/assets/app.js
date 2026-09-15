@@ -142,5 +142,15 @@
   const FILTER_LABELS = { macd: 'MACD', ma_crossover: 'MA Cross', ema_slope: 'EMA slope', REAL_YIELD: 'Real Yield' };
   const filterLabel = (name, timeframe) => `${timeframe} ${FILTER_LABELS[name] || name} filter`;
 
-  window.TB = { esc, num, pct, signClass, relativeTime, lineChart, ruleSetLabel, filterLabel };
+  // rule-set-expansion phase-1 ticket 06: two exit reasons bound the winning side, alongside the
+  // existing fixed stop-loss and signal-change exits.
+  const EXIT_REASON_LABELS = {
+    stop_loss: 'Stop loss',
+    trailing_stop: 'Trailing stop',
+    profit_target: 'Profit target',
+    signal_change: 'Signal change',
+  };
+  const exitReasonLabel = (reason) => EXIT_REASON_LABELS[reason] || 'Signal change';
+
+  window.TB = { esc, num, pct, signClass, relativeTime, lineChart, ruleSetLabel, filterLabel, exitReasonLabel };
 })();

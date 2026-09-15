@@ -1,3 +1,6 @@
+import socket
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -118,5 +121,45 @@ def test_start_succeeds_when_a_failed_walk_forward_verdict_is_acknowledged(clien
     response = client.post(
         "/api/paper/start", headers={**JSON, "Origin": LOCAL}, content='{"acknowledge_failed_walk_forward": true}'
     )
+    assert response.status_code == 200
+    assert fake_supervisor.started == 1
+
+
+def _fake_interfaces(*addresses: str) -> dict:
+    """Mimics psutil.net_if_addrs()'s shape closely enough for local_network_addresses(): a dict of
+    interface name -> list of address objects, each exposing .family and .address."""
+    return {"eth0": [SimpleNamespace(family=socket.AF_INET, address=address) for address in addresses]}
+
+
+def test_local_network_addresses_keeps_private_lan_ranges():
+    interfaces = _fake_interfaces("192.168.1.4", "10.0.0.5", "172.16.3.1")
+    assert set(server.local_network_addresses(interfaces)) == {"192.168.1.4", "10.0.0.5", "172.16.3.1"}
+
+
+def test_local_network_addresses_excludes_loopback_and_link_local():
+    interfaces = _fake_interfaces("127.0.0.1", "169.254.153.182")
+    assert server.local_network_addresses(interfaces) == []
+
+
+def test_local_network_addresses_excludes_non_ipv4_and_public_addresses():
+    interfaces = {
+        "eth0": [
+            SimpleNamespace(family=socket.AF_INET, address="8.8.8.8"),  # public, not a LAN address
+            SimpleNamespace(family=socket.AF_INET6, address="fe80::1"),  # right range, wrong family
+        ]
+    }
+    assert server.local_network_addresses(interfaces) == []
+
+
+def test_a_lan_address_is_accepted_alongside_localhost(fake_supervisor, monkeypatch):
+    """The user explicitly asked for the dashboard to be reachable — and controllable — from other
+    devices on the local network, not just this machine. A request whose Host is one of this
+    machine's own known LAN addresses must be treated the same as a request to localhost."""
+    monkeypatch.setattr(server, "ALLOWED_HOSTS", server.ALLOWED_HOSTS | {"192.168.1.4:8765"})
+    monkeypatch.setattr(server, "ALLOWED_ORIGINS", server.ALLOWED_ORIGINS | {"http://192.168.1.4:8765"})
+    lan_client = TestClient(server.app, base_url="http://192.168.1.4:8765")
+
+    response = lan_client.post("/api/paper/start", headers={**JSON, "Origin": "http://192.168.1.4:8765"}, content="{}")
+
     assert response.status_code == 200
     assert fake_supervisor.started == 1

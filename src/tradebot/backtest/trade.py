@@ -15,4 +15,4 @@ class Trade:
     cost_pct: float  # transaction (spread) cost charged against pnl_pct, leveraged by position_fraction
     swap_pct: float  # overnight holding cost/credit charged against pnl_pct, leveraged by position_fraction
     pnl_pct: float  # net return contributed to equity by this trade, after cost_pct and swap_pct
-    exit_reason: str  # "signal_change" or "stop_loss"
+    exit_reason: str  # "signal_change", "stop_loss", "trailing_stop", or "profit_target"

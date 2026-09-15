@@ -1,5 +1,5 @@
 (function () {
-  const { esc, num, pct, signClass, relativeTime, lineChart, ruleSetLabel } = window.TB;
+  const { esc, num, pct, signClass, relativeTime, lineChart, ruleSetLabel, exitReasonLabel } = window.TB;
   const POLL_MS = 4000;
   const FAST_POLL_MS = 1000;
   const $ = (id) => document.getElementById(id);
@@ -227,7 +227,7 @@
           <td class="num">${esc(t.exit_time)}</td>
           <td class="num r">${num(t.exit_price)}</td>
           <td class="num r ${signClass(t.pnl_pct)}">${pct(t.pnl_pct, 3)}</td>
-          <td class="muted">${t.exit_reason === 'stop_loss' ? 'Stop loss' : 'Signal change'}</td>
+          <td class="muted">${exitReasonLabel(t.exit_reason)}</td>
         </tr>`;
       })
       .join('');

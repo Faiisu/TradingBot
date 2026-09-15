@@ -29,7 +29,10 @@ def run() -> None:
     # swap_long_points/swap_short_points/point_value fetched live from MT5's symbol_info("XAUUSDm")
     # on the connected Exness demo account. Real swap rates drift over time and should be re-checked
     # periodically rather than trusted indefinitely.
-    risk_controls = RiskControls(swap_long_points=-534.9, swap_short_points=0.0, point_value=0.001)
+    risk_controls = RiskControls(
+        swap_long_points=-534.9, swap_short_points=0.0, point_value=0.001,
+        trailing_stop_multiplier=2.0, profit_target_r_multiple=3.0,
+    )
     engine = BacktestEngine(risk_controls=risk_controls)
 
     gold_data = {DataRequirement(timeframe=tf): load_ohlcv(tf, cache_dir=CACHE_DIR) for tf in TIMEFRAMES}

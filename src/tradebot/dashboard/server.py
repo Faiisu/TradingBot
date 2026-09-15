@@ -1,8 +1,11 @@
+import ipaddress
 import json
+import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import psutil
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -11,7 +14,12 @@ from tradebot.backtest.persistence import load_backtest_results, load_walk_forwa
 from tradebot.dashboard.state import read_state
 from tradebot.paper.supervisor import AlreadyRunning, NotRunning, PaperTradingSupervisor
 
-HOST = "127.0.0.1"
+# Binds every interface, not just loopback: the user explicitly chose to make the dashboard — including
+# the Paper Trading page's Start/Stop controls — reachable and controllable from other devices on the
+# local network, not just this machine. Requests are still checked against ALLOWED_HOSTS below, which is
+# derived from this machine's own known addresses rather than trusted from the incoming request itself,
+# so a DNS-rebinding page still can't talk its way onto the allowlist.
+HOST = "0.0.0.0"
 PORT = 8765
 
 DASHBOARD_DIR = Path(__file__).resolve().parent
@@ -23,10 +31,37 @@ ENSEMBLE_PATH = DATA_DIR / "ensemble.json"
 WALK_FORWARD_VERDICT_PATH = DATA_DIR / "walk_forward_verdict.json"
 PAPER_TRADING_SCRIPT = REPO_DIR / "scripts" / "run_paper_trading.py"
 
-# Control endpoints start and stop a process, so they only accept requests from this dashboard's own pages.
-# A fixed allowlist, not one derived from the Host header: a DNS-rebinding page could otherwise make both
-# Host and Origin look local.
-ALLOWED_HOSTS = {f"{HOST}:{PORT}", f"localhost:{PORT}"}
+_PRIVATE_LAN_NETWORKS = [ipaddress.ip_network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")]
+
+
+def local_network_addresses(interfaces: dict | None = None) -> list[str]:
+    """This machine's own LAN IPv4 addresses (Wi-Fi/Ethernet) — classic private ranges only, never
+    loopback or link-local (169.254.x, assigned when a device gets no DHCP lease) since neither is
+    something another device could actually dial in on. Computed once at import time from this
+    machine's real interfaces (via psutil, already a dependency), not from anything a request claims —
+    a DNS-rebinding page still can't add itself here. `interfaces` is injectable for testing; defaults
+    to psutil.net_if_addrs()."""
+    interfaces = psutil.net_if_addrs() if interfaces is None else interfaces
+    addresses = []
+    for addrs in interfaces.values():
+        for addr in addrs:
+            if addr.family != socket.AF_INET:
+                continue
+            try:
+                ip = ipaddress.ip_address(addr.address)
+            except ValueError:
+                continue
+            if any(ip in network for network in _PRIVATE_LAN_NETWORKS):
+                addresses.append(addr.address)
+    return addresses
+
+
+# Control endpoints start and stop a process, so they only accept requests whose Host/Origin is this
+# machine's own address — loopback, or one of its own LAN addresses now that the dashboard is reachable
+# from the network too. A fixed allowlist, not one derived from the Host header: a DNS-rebinding page
+# could otherwise make both Host and Origin look local. Fixed at import time — a DHCP-reassigned LAN
+# IP after that needs a dashboard restart to pick up, an acceptable tradeoff for a personal single-user tool.
+ALLOWED_HOSTS = {f"{host}:{PORT}" for host in ["127.0.0.1", "localhost", *local_network_addresses()]}
 ALLOWED_ORIGINS = {f"http://{host}" for host in ALLOWED_HOSTS}
 
 app = FastAPI()

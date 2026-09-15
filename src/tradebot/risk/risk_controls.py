@@ -23,8 +23,20 @@ class RiskControls:
     # (a trailing stop or profit target) is the follow-up (see .scratch/phase-1-real-data-validation/
     # issues/06-bound-the-winning-side-of-trades.md).
     max_position_fraction: float = 0.2
-    # Placeholder round-trip transaction cost in price points (spread + commission), until step 9
-    # reads the real spread from MT5's symbol_info() for the connected Exness account.
+    # Bounds the winning side of a trade the same way the ATR stop already bounds the losing side —
+    # see .scratch/phase-1-real-data-validation/issues/06-bound-the-winning-side-of-trades.md. Both
+    # None by default (disabled, byte-identical to pre-ticket-06 behavior); either or both can be set.
+    # trailing_stop_multiplier: a chandelier-style stop that ratchets with the highest high (long) /
+    # lowest low (short) seen since entry, never loosening — caps giveback from a move's peak without
+    # hard-capping total profit. profit_target_r_multiple: a hard cap at N times the trade's own initial
+    # risk (1R = atr_stop_multiplier * ATR at entry, the same distance the fixed stop-loss uses).
+    trailing_stop_multiplier: float | None = None
+    profit_target_r_multiple: float | None = None
+    # Round-trip transaction cost in price points for the Exness Standard (commission-free) account.
+    # XAUUSD typical spread on Standard/Standard Cent sits in the 16–35 pip range ($0.16–$0.35,
+    # where 1 pip = $0.01 for XAUUSDm); 0.30 ($0.30 = 30 pips) is a conservative mid-range
+    # estimate. The "spreads starting from 0.2 pips" advertised by Exness refers to major forex
+    # pairs (e.g. EURUSD), not gold.
     round_trip_cost_price: float = 0.30
     # Overnight holding (swap) cost, in points per night, per direction — 0 by default so existing
     # backtests/tests are unaffected. scripts/run_backtest.py passes real values read from MT5's
@@ -39,6 +51,23 @@ class RiskControls:
 
     def stop_price(self, entry_price: float, atr_at_entry: float, direction: int) -> float:
         return stop_price(entry_price, self.stop_distance(atr_at_entry), direction)
+
+    def trailing_stop_price(self, entry_price: float, atr_at_entry: float, direction: int, extreme_price: float) -> float | None:
+        """None when disabled. Otherwise the chandelier stop for `extreme_price` (the highest high (long)
+        or lowest low (short) reached since entry) — the same ATR distance the fixed stop-loss uses,
+        trailing from the extreme instead of from entry_price."""
+        if self.trailing_stop_multiplier is None:
+            return None
+        distance = atr_stop_distance(atr_at_entry, self.trailing_stop_multiplier)
+        return stop_price(extreme_price, distance, direction)
+
+    def profit_target_price(self, entry_price: float, atr_at_entry: float, direction: int) -> float | None:
+        """None when disabled. Otherwise entry_price + direction * profit_target_r_multiple * 1R, where
+        1R is the same initial risk distance (atr_stop_multiplier * ATR) the fixed stop-loss uses."""
+        if self.profit_target_r_multiple is None:
+            return None
+        one_r = self.stop_distance(atr_at_entry)
+        return entry_price + direction * self.profit_target_r_multiple * one_r
 
     def position_fraction(self, entry_price: float, atr_at_entry: float) -> float:
         return position_fraction(

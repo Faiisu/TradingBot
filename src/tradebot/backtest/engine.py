@@ -47,12 +47,16 @@ class BacktestEngine:
 
         trades: list[Trade] = []
         for start, end, direction in _find_segments(signal):
-            # A stop-loss only ends this specific trade, not the strategy's underlying directional
-            # view: if the signal is still the same direction, re-enter immediately at the stop-out
-            # bar, matching SimulatedBroker's same-bar re-entry (paper trading). Without this, a
-            # segment that gets stopped out early would sit out the rest of a still-adverse move for
-            # free, which is a systematic, unrealistic advantage backtest-only would have over paper
-            # trading.
+            # A risk-control exit (fixed stop, trailing stop, or profit target) only ends this specific
+            # trade, not the strategy's underlying directional view: if the signal is still the same
+            # direction, re-enter immediately at the exit bar, matching SimulatedBroker's same-bar
+            # re-entry (paper trading). Without this, a segment that exits early would sit out the rest
+            # of a still-adverse (or, symmetrically, still-favorable) move for free — a systematic,
+            # unrealistic advantage backtest-only would have over paper trading. This is a deliberate
+            # extension of the pre-ticket-06 stop-loss-only re-entry rule to the two new exit reasons:
+            # a trend that keeps running after a profit-target-out is expected to chain several
+            # capped-size wins rather than sit out, which is what "bounding the winning side" should
+            # look like for a still-intact trend, not one uncapped ride.
             entry_idx = start
             while entry_idx <= end:
                 entry_price = close[entry_idx]
@@ -61,20 +65,40 @@ class BacktestEngine:
                     break
 
                 stop = self.risk_controls.stop_price(entry_price, atr_at_entry, direction)
+                target = self.risk_controls.profit_target_price(entry_price, atr_at_entry, direction)
                 exit_idx = end
                 exit_price = close[end]
                 exit_reason = "signal_change"
 
-                if entry_idx + 1 <= end:
-                    if direction == 1:
-                        hit_mask = low[entry_idx + 1 : end + 1] <= stop
-                    else:
-                        hit_mask = high[entry_idx + 1 : end + 1] >= stop
-                    if hit_mask.any():
-                        offset = int(np.argmax(hit_mask))
-                        exit_idx = entry_idx + 1 + offset
-                        exit_price = stop
-                        exit_reason = "stop_loss"
+                # Bounds the winning side the same way the fixed stop bounds the losing side (rule-set-
+                # expansion phase-1 ticket 06): a trailing stop ratchets with the best price reached
+                # since entry (never loosening) and/or a profit target caps at a fixed multiple of the
+                # trade's own initial risk. Both are optional (RiskControls returns None when disabled,
+                # making this identical to the pre-ticket-06 fixed-stop-only behavior); checked bar by
+                # bar since the trailing level moves. When a bar's range could plausibly hit both the
+                # stop and the target, the stop-loss is checked first — the risk-defining boundary wins
+                # on the conservative side, since only OHLC (not tick data) is available to sequence them.
+                current_stop = stop
+                extreme = high[entry_idx] if direction == 1 else low[entry_idx]
+                for i in range(entry_idx + 1, end + 1):
+                    trailing = self.risk_controls.trailing_stop_price(entry_price, atr_at_entry, direction, extreme)
+                    if trailing is not None:
+                        current_stop = max(current_stop, trailing) if direction == 1 else min(current_stop, trailing)
+
+                    stop_hit = (direction == 1 and low[i] <= current_stop) or (direction == -1 and high[i] >= current_stop)
+                    target_hit = target is not None and (
+                        (direction == 1 and high[i] >= target) or (direction == -1 and low[i] <= target)
+                    )
+
+                    if stop_hit:
+                        exit_idx, exit_price = i, current_stop
+                        exit_reason = "trailing_stop" if current_stop != stop else "stop_loss"
+                        break
+                    if target_hit:
+                        exit_idx, exit_price, exit_reason = i, target, "profit_target"
+                        break
+
+                    extreme = max(extreme, high[i]) if direction == 1 else min(extreme, low[i])
 
                 entry_time = ohlcv.index[entry_idx]
                 exit_time = ohlcv.index[exit_idx]
@@ -91,7 +115,7 @@ class BacktestEngine:
                         exit_time=exit_time,
                         entry_price=float(entry_price),
                         exit_price=float(exit_price),
-                        stop_price=float(stop),
+                        stop_price=float(current_stop),
                         position_fraction=float(position_fraction),
                         cost_pct=float(cost_pct),
                         swap_pct=float(swap_pct),
@@ -100,7 +124,7 @@ class BacktestEngine:
                     )
                 )
 
-                if exit_reason != "stop_loss":
+                if exit_reason == "signal_change":
                     break
                 entry_idx = exit_idx
 
