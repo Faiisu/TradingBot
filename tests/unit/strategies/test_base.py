@@ -5,7 +5,6 @@ import pytest
 from tradebot.strategies.base import (
     DataRequirement,
     channel_breakout_signals,
-    ensure_reference_market_resolvable,
     resolve_supporting_data,
     threshold_reversion_signals,
 )
@@ -25,7 +24,7 @@ def _ohlcv(periods=5):
 
 
 def test_plain_candidate_gets_an_empty_supporting_dict():
-    result = resolve_supporting_data(_PlainCandidate(), ohlcv_by_timeframe={Timeframe.M15: _ohlcv()})
+    result = resolve_supporting_data(_PlainCandidate(), data_by_requirement={DataRequirement(timeframe=Timeframe.M15): _ohlcv()})
     assert result == {}
 
 
@@ -35,16 +34,17 @@ class _MtfLikeCandidate:
     supporting_data = (DataRequirement(timeframe=Timeframe.H1),)
 
 
-def test_candidate_with_a_requirement_gets_the_matching_timeframe_data():
+def test_candidate_with_a_requirement_gets_the_matching_data():
     h1_data = _ohlcv()
-    result = resolve_supporting_data(_MtfLikeCandidate(), ohlcv_by_timeframe={Timeframe.M15: _ohlcv(), Timeframe.H1: h1_data})
+    data_by_requirement = {DataRequirement(timeframe=Timeframe.M15): _ohlcv(), DataRequirement(timeframe=Timeframe.H1): h1_data}
+    result = resolve_supporting_data(_MtfLikeCandidate(), data_by_requirement)
 
     assert result == {DataRequirement(timeframe=Timeframe.H1): h1_data}
 
 
-def test_missing_required_timeframe_raises_a_clear_error():
+def test_missing_required_data_raises_a_clear_error():
     with pytest.raises(KeyError, match="H1"):
-        resolve_supporting_data(_MtfLikeCandidate(), ohlcv_by_timeframe={Timeframe.M15: _ohlcv()})
+        resolve_supporting_data(_MtfLikeCandidate(), data_by_requirement={DataRequirement(timeframe=Timeframe.M15): _ohlcv()})
 
 
 class _MarketFilteredLikeCandidate:
@@ -53,19 +53,20 @@ class _MarketFilteredLikeCandidate:
     supporting_data = (DataRequirement(timeframe=Timeframe.H1, reference_market="DXY"),)
 
 
-def test_reference_market_requirement_is_not_yet_resolvable():
-    with pytest.raises(NotImplementedError, match="DXY"):
-        resolve_supporting_data(_MarketFilteredLikeCandidate(), ohlcv_by_timeframe={Timeframe.H1: _ohlcv()})
+def test_candidate_with_a_reference_market_requirement_gets_that_markets_own_data():
+    dxy_data = _ohlcv()
+    data_by_requirement = {
+        DataRequirement(timeframe=Timeframe.H1): _ohlcv(),  # gold's own H1 — must NOT be what's returned
+        DataRequirement(timeframe=Timeframe.H1, reference_market="DXY"): dxy_data,
+    }
+    result = resolve_supporting_data(_MarketFilteredLikeCandidate(), data_by_requirement)
+
+    assert result == {DataRequirement(timeframe=Timeframe.H1, reference_market="DXY"): dxy_data}
 
 
-def test_ensure_reference_market_resolvable_is_the_single_shared_check():
-    """Both resolve_supporting_data (Backtest) and paper/loop.py's update_member (Paper Trading) call
-    this directly, so a Market-Filtered Candidate is rejected identically everywhere rather than the
-    two implementations drifting apart."""
-    ensure_reference_market_resolvable(DataRequirement(timeframe=Timeframe.H1))  # no reference market: fine
-
-    with pytest.raises(NotImplementedError, match="DXY"):
-        ensure_reference_market_resolvable(DataRequirement(timeframe=Timeframe.H1, reference_market="DXY"))
+def test_missing_reference_market_data_raises_a_clear_error():
+    with pytest.raises(KeyError, match="DXY"):
+        resolve_supporting_data(_MarketFilteredLikeCandidate(), data_by_requirement={DataRequirement(timeframe=Timeframe.H1): _ohlcv()})
 
 
 def test_channel_breakout_signals_uses_a_narrower_exit_channel_than_entry():

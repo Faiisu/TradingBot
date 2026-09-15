@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from tradebot.data.cache import load_ohlcv
 from tradebot.data.history import ensure_bar_capacity
 from tradebot.mt5_client import mt5_session
-from tradebot.strategies.registry import TIMEFRAMES
+from tradebot.strategies.registry import MARKET_FILTER_TIMEFRAME, REFERENCE_MARKETS, TIMEFRAMES
 
 SYMBOL = "XAUUSDm"  # this Exness demo server suffixes gold with "m"; confirmed via symbols_get()
 CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "cache"
@@ -32,6 +32,19 @@ def run(force: bool = False) -> None:
                 timeframe,
                 mt5_api=mt5,
                 symbol=SYMBOL,
+                cache_dir=CACHE_DIR,
+                num_years=NUM_YEARS,
+                force_refresh=force,
+            )
+
+        # Reference Markets (Market Filters): only MARKET_FILTER_TIMEFRAME (H1) is needed, not every
+        # Timeframe gold trades on — mirrors how an MTF Trend Filter only reads its higher Timeframe.
+        for market, config in REFERENCE_MARKETS.items():
+            print(f"Fetching Reference Market {market} ({config['symbol']})...")
+            load_ohlcv(
+                MARKET_FILTER_TIMEFRAME,
+                mt5_api=mt5,
+                symbol=config.symbol,
                 cache_dir=CACHE_DIR,
                 num_years=NUM_YEARS,
                 force_refresh=force,

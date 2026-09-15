@@ -167,22 +167,41 @@ def test_update_member_fetches_and_passes_through_declared_supporting_data():
     assert to_mt5_timeframe(Timeframe.H1) in fake.timeframes_requested
 
 
-def test_update_member_rejects_a_reference_market_requirement():
-    """A Market-Filtered Candidate isn't resolvable yet (rule-set-expansion tickets 07-09) — paper
-    trading must fail the same way the Backtest does (see test_reference_market_requirement_is_not_yet_resolvable
-    in tests/unit/strategies/test_base.py), via the one shared check, not its own copy."""
+def test_update_member_fetches_a_reference_market_requirement_from_its_own_symbol():
+    """A Market-Filtered Candidate's DataRequirement names a Reference Market (e.g. "DXY"), not the
+    traded instrument — update_member must fetch that market's own MT5 symbol (registry.py's
+    REFERENCE_MARKETS), not gold's."""
 
     class _MarketFilteredLikeCandidate:
         name = "market_filtered_like"
         timeframe = Timeframe.M15
         supporting_data = (DataRequirement(timeframe=Timeframe.H1, reference_market="DXY"),)
 
+        def __init__(self):
+            self.seen_supporting = None
+
         def generate_signals(self, ohlcv, supporting=None):
+            self.seen_supporting = supporting
             return pd.Series(1.0, index=ohlcv.index)
 
+    class _SymbolTrackingFakeMt5(_FakeMt5):
+        def copy_rates_from_pos(self, symbol, timeframe, start_pos, count):
+            self.symbols_requested = getattr(self, "symbols_requested", [])
+            self.symbols_requested.append(symbol)
+            return super().copy_rates_from_pos(symbol, timeframe, start_pos, count)
+
+    fake = _SymbolTrackingFakeMt5()
+    candidate = _MarketFilteredLikeCandidate()
     broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
-    with pytest.raises(NotImplementedError, match="DXY"):
-        update_member(_FakeMt5(), "XAUUSD", _MarketFilteredLikeCandidate(), broker, 40, last_bar_time=None)
+
+    processed, _, _ = update_member(fake, "XAUUSDm", candidate, broker, 40, last_bar_time=None)
+
+    assert processed is True
+    key = DataRequirement(timeframe=Timeframe.H1, reference_market="DXY")
+    assert key in candidate.seen_supporting
+    assert not candidate.seen_supporting[key].empty
+    assert "XAUUSDm" in fake.symbols_requested  # the candidate's own entry bars
+    assert "DXYm" in fake.symbols_requested  # DXY's own bars, not XAUUSDm again
 
 
 def test_fetch_recent_bars_handles_no_data():

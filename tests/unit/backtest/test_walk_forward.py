@@ -119,7 +119,9 @@ def test_a_candidate_that_only_profits_in_one_test_window_is_never_chosen_for_th
     trap = _TrapCandidate(reveal_at=target_window.test_start, timeframe=Timeframe.H1)
 
     engine = BacktestEngine(risk_controls=RiskControls())
-    result = run_walk_forward([trap], {Timeframe.H1: ohlcv}, engine, selection_days=3, test_days=2)
+    from tradebot.strategies.base import DataRequirement
+
+    result = run_walk_forward([trap], {DataRequirement(timeframe=Timeframe.H1): ohlcv}, engine, selection_days=3, test_days=2)
 
     chosen_names_for_target_window = {m.candidate_name for m in result.windows[2].members}
     assert "trap" not in chosen_names_for_target_window

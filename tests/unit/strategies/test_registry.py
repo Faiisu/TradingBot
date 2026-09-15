@@ -1,17 +1,20 @@
+from tradebot.strategies.market_filter import MarketFilteredCandidate
 from tradebot.strategies.mtf import MtfCandidate
 from tradebot.strategies.registry import build_candidates
 from tradebot.timeframe import Timeframe
 
 
-def test_build_candidates_returns_single_timeframe_plus_mtf():
+def test_build_candidates_returns_single_timeframe_plus_mtf_plus_market_filtered():
     candidates = build_candidates()
 
-    single_timeframe = [c for c in candidates if not isinstance(c, MtfCandidate)]
+    single_timeframe = [c for c in candidates if not isinstance(c, (MtfCandidate, MarketFilteredCandidate))]
     mtf = [c for c in candidates if isinstance(c, MtfCandidate)]
+    market_filtered = [c for c in candidates if isinstance(c, MarketFilteredCandidate)]
 
     assert len(single_timeframe) == 44  # 11 rule sets x 4 timeframes (H1, M30, M15, M5)
     assert len(mtf) == 9  # 3 entry rule sets x 3 filters
-    assert len(candidates) == 53
+    assert len(market_filtered) == 12  # 6 trend rule sets x 2 entry timeframes (M15, M5) x 1 Reference Market (DXY)
+    assert len(candidates) == 65
 
 
 def test_mtf_candidates_all_trade_m15_filtered_by_h1():
@@ -28,7 +31,8 @@ def test_mtf_candidates_have_unique_names():
 
 
 def test_single_timeframe_candidates_have_no_filter_timeframe():
-    single_timeframe = [c for c in build_candidates() if not isinstance(c, MtfCandidate)]
+    candidates = build_candidates()
+    single_timeframe = [c for c in candidates if not isinstance(c, (MtfCandidate, MarketFilteredCandidate))]
     assert all(getattr(c, "filter_timeframe", None) is None for c in single_timeframe)
 
 
@@ -43,3 +47,35 @@ def test_the_new_trend_rule_sets_are_single_timeframe_only_not_mtf_entries():
         "volume_confirmed_breakout",
     )
     assert not any(name.startswith(excluded_prefixes) for name in mtf_entry_names)
+
+
+def test_market_filtered_candidates_trade_m15_and_m5_filtered_by_dxy_on_h1():
+    market_filtered = [c for c in build_candidates() if isinstance(c, MarketFilteredCandidate)]
+
+    assert all(c.timeframe in (Timeframe.M15, Timeframe.M5) for c in market_filtered)
+    assert all(c.filter_timeframe == Timeframe.H1 for c in market_filtered)
+    assert all(c.reference_market == "DXY" for c in market_filtered)
+    assert all(c.relationship == "inverse" for c in market_filtered)
+
+
+def test_market_filtered_candidates_cover_exactly_the_six_trend_rule_sets():
+    market_filtered = [c for c in build_candidates() if isinstance(c, MarketFilteredCandidate)]
+    entry_names = {c.entry_strategy.name for c in market_filtered}
+
+    assert entry_names == {
+        "ma_crossover_20_50",
+        "macd_12_26_9",
+        "atr_channel_breakout_20_14_2.0",
+        "donchian_breakout_20_10",
+        "supertrend_10_3.0",
+        "adx_dmi_14",
+    }
+
+
+def test_market_filtered_candidates_are_unique_per_name_and_timeframe():
+    """Names repeat across the two Entry Timeframes (same convention as every other Rule Set, e.g.
+    donchian_breakout_20_10 names both its H1 and M5 candidates identically) — identity is the
+    (name, timeframe) pair, not the name alone."""
+    market_filtered = [c for c in build_candidates() if isinstance(c, MarketFilteredCandidate)]
+    keys = [(c.name, c.timeframe) for c in market_filtered]
+    assert len(keys) == len(set(keys))

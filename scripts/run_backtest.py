@@ -18,8 +18,8 @@ from tradebot.ensemble.selection import save_ensemble, select_ensemble
 from tradebot.metrics.drawdown import max_drawdown_pct
 from tradebot.metrics.performance import performance_metric, total_return_pct
 from tradebot.risk.risk_controls import RiskControls
-from tradebot.strategies.base import resolve_supporting_data
-from tradebot.strategies.registry import TIMEFRAMES, build_candidates
+from tradebot.strategies.base import DataRequirement, resolve_supporting_data
+from tradebot.strategies.registry import MARKET_FILTER_TIMEFRAME, REFERENCE_MARKETS, TIMEFRAMES, build_candidates
 
 CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "cache"
 
@@ -31,13 +31,20 @@ def run() -> None:
     risk_controls = RiskControls(swap_long_points=-534.9, swap_short_points=0.0, point_value=0.001)
     engine = BacktestEngine(risk_controls=risk_controls)
 
-    ohlcv_by_timeframe = trim_to_common_window({tf: load_ohlcv(tf, cache_dir=CACHE_DIR) for tf in TIMEFRAMES})
+    gold_data = {DataRequirement(timeframe=tf): load_ohlcv(tf, cache_dir=CACHE_DIR) for tf in TIMEFRAMES}
+    reference_market_data = {
+        DataRequirement(timeframe=MARKET_FILTER_TIMEFRAME, reference_market=market): load_ohlcv(
+            MARKET_FILTER_TIMEFRAME, symbol=config.symbol, cache_dir=CACHE_DIR
+        )
+        for market, config in REFERENCE_MARKETS.items()
+    }
+    data_by_requirement = trim_to_common_window({**gold_data, **reference_market_data})
 
     candidates = build_candidates()
     candidates_and_results: list[tuple] = []
     for candidate in candidates:
-        ohlcv = ohlcv_by_timeframe[candidate.timeframe]
-        supporting = resolve_supporting_data(candidate, ohlcv_by_timeframe)
+        ohlcv = data_by_requirement[DataRequirement(timeframe=candidate.timeframe)]
+        supporting = resolve_supporting_data(candidate, data_by_requirement)
         candidates_and_results.append((candidate, engine.run(candidate, ohlcv, supporting)))
 
     results: list[BacktestResult] = [r for _, r in candidates_and_results]
@@ -65,7 +72,7 @@ def run() -> None:
     print(f"\nEnsemble saved to {ensemble_path} (used by scripts/run_paper_trading.py)")
 
     print("\nRunning Walk-Forward Validation (anchored, 180d Selection / 60d Test windows)...")
-    walk_forward = run_walk_forward(candidates, ohlcv_by_timeframe, engine)
+    walk_forward = run_walk_forward(candidates, data_by_requirement, engine)
     print(f"Walk-Forward Validation: {len(walk_forward.windows)} Test Window(s), "
           f"out-of-sample metric={walk_forward.performance_metric:.2f}, "
           f"{'PASSED' if walk_forward.passed else 'FAILED'}")
@@ -78,8 +85,9 @@ def run() -> None:
         )
 
     results_path = CACHE_DIR.parent / "backtest_results.json"
-    window_start = max(df.index.min() for df in ohlcv_by_timeframe.values())
-    window_end = min(df.index.max() for df in ohlcv_by_timeframe.values())
+    gold_requirements = [req for req in data_by_requirement if req.reference_market is None]
+    window_start = max(data_by_requirement[req].index.min() for req in gold_requirements)
+    window_end = min(data_by_requirement[req].index.max() for req in gold_requirements)
     save_backtest_results(candidates_and_results, results_path, window_start, window_end, walk_forward)
     print(f"\nFull results (incl. trade-by-trade history + Walk-Forward Validation) saved to {results_path} "
           f"(used by the dashboard's /backtest page)")

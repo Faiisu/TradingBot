@@ -7,7 +7,8 @@ import pandas as pd
 from tradebot.dashboard.state import build_state, write_state
 from tradebot.indicators import atr
 from tradebot.paper.simulated_broker import SimulatedBroker
-from tradebot.strategies.base import DataRequirement, StrategyCandidate, ensure_reference_market_resolvable
+from tradebot.strategies.base import DataRequirement, StrategyCandidate
+from tradebot.strategies.registry import REFERENCE_MARKETS
 from tradebot.timeframe import TIMEFRAME_SECONDS, Timeframe, to_mt5_timeframe
 
 DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
@@ -96,8 +97,8 @@ def update_member(
 
     supporting: dict[DataRequirement, pd.DataFrame] = {}
     for requirement in getattr(candidate, "supporting_data", ()):
-        ensure_reference_market_resolvable(requirement)
-        supporting[requirement] = fetch_recent_bars(mt5_api, symbol, requirement.timeframe, lookback_bars)
+        requirement_symbol = symbol if requirement.reference_market is None else REFERENCE_MARKETS[requirement.reference_market].symbol
+        supporting[requirement] = fetch_recent_bars(mt5_api, requirement_symbol, requirement.timeframe, lookback_bars)
 
     last_close = decide_and_update(candidate, broker, recent, supporting)
     return True, bar_time, last_close

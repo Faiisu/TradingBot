@@ -5,8 +5,7 @@ import pandas as pd
 from tradebot.backtest.engine import BacktestEngine
 from tradebot.ensemble.selection import EnsembleMember, select_ensemble
 from tradebot.metrics.performance import ENSEMBLE_METRIC_THRESHOLD, performance_metric, total_return_pct
-from tradebot.strategies.base import StrategyCandidate, resolve_supporting_data
-from tradebot.timeframe import Timeframe
+from tradebot.strategies.base import DataRequirement, StrategyCandidate, resolve_supporting_data
 
 DEFAULT_SELECTION_DAYS = 180
 DEFAULT_TEST_DAYS = 60
@@ -78,14 +77,16 @@ def chain_equity_curve(outcomes: list[WindowOutcome], initial_equity: float = 1.
     return pd.Series(values, index=pd.DatetimeIndex(index))
 
 
-def _slice_window(data: dict[Timeframe, pd.DataFrame], start: pd.Timestamp, end: pd.Timestamp) -> dict[Timeframe, pd.DataFrame]:
+def _slice_window(
+    data: dict[DataRequirement, pd.DataFrame], start: pd.Timestamp, end: pd.Timestamp
+) -> dict[DataRequirement, pd.DataFrame]:
     return {key: df.loc[(df.index >= start) & (df.index < end)] for key, df in data.items()}
 
 
-def _run_on_slice(engine: BacktestEngine, candidate: StrategyCandidate, data_slice: dict[Timeframe, pd.DataFrame]):
+def _run_on_slice(engine: BacktestEngine, candidate: StrategyCandidate, data_slice: dict[DataRequirement, pd.DataFrame]):
     """Runs one Candidate on one windowed slice of data, or None if the slice has nothing for its
     Entry Timeframe (an edge window can be too short to contain any bars for a given timeframe)."""
-    ohlcv = data_slice.get(candidate.timeframe)
+    ohlcv = data_slice.get(DataRequirement(timeframe=candidate.timeframe))
     if ohlcv is None or ohlcv.empty:
         return None
     supporting = resolve_supporting_data(candidate, data_slice)
@@ -94,7 +95,7 @@ def _run_on_slice(engine: BacktestEngine, candidate: StrategyCandidate, data_sli
 
 def run_walk_forward(
     candidates: list[StrategyCandidate],
-    ohlcv_by_timeframe: dict[Timeframe, pd.DataFrame],
+    data_by_requirement: dict[DataRequirement, pd.DataFrame],
     engine: BacktestEngine,
     selection_days: int = DEFAULT_SELECTION_DAYS,
     test_days: int = DEFAULT_TEST_DAYS,
@@ -102,8 +103,8 @@ def run_walk_forward(
     """Judges the Ensemble selection rule out of sample (ADR 0002): for each anchored window, choose
     an Ensemble using only its Selection Window, then score that same Ensemble on the Test Window that
     follows — a Test Window's own data is never part of the choice made for it."""
-    common_start = max(df.index.min() for df in ohlcv_by_timeframe.values())
-    common_end = min(df.index.max() for df in ohlcv_by_timeframe.values())
+    common_start = max(df.index.min() for df in data_by_requirement.values())
+    common_end = min(df.index.max() for df in data_by_requirement.values())
     # Keyed by each candidate's own name (not candidate_rule_set_key's base-strategy name), because an
     # EnsembleMember names the exact candidate chosen — the unfiltered strategy and each of its
     # Market-Filtered variants must resolve back to their own, distinct candidate here.
@@ -111,7 +112,7 @@ def run_walk_forward(
 
     outcomes: list[WindowOutcome] = []
     for bounds in compute_windows(common_start, common_end, selection_days, test_days):
-        selection_data = _slice_window(ohlcv_by_timeframe, bounds.selection_start, bounds.selection_end)
+        selection_data = _slice_window(data_by_requirement, bounds.selection_start, bounds.selection_end)
         candidates_and_selection_results = [
             (candidate, result)
             for candidate in candidates
@@ -119,7 +120,7 @@ def run_walk_forward(
         ]
         ensemble = select_ensemble(candidates_and_selection_results)
 
-        test_data = _slice_window(ohlcv_by_timeframe, bounds.test_start, bounds.test_end)
+        test_data = _slice_window(data_by_requirement, bounds.test_start, bounds.test_end)
         member_returns = [
             total_return_pct(result.equity_curve)
             for member in ensemble.members
