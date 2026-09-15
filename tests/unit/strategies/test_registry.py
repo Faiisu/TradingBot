@@ -13,8 +13,8 @@ def test_build_candidates_returns_single_timeframe_plus_mtf_plus_market_filtered
 
     assert len(single_timeframe) == 44  # 11 rule sets x 4 timeframes (H1, M30, M15, M5)
     assert len(mtf) == 9  # 3 entry rule sets x 3 filters
-    assert len(market_filtered) == 12  # 6 trend rule sets x 2 entry timeframes (M15, M5) x 1 Reference Market (DXY)
-    assert len(candidates) == 65
+    assert len(market_filtered) == 24  # 6 trend rule sets x 2 entry timeframes (M15, M5) x 2 Reference Markets (DXY, XAGUSD)
+    assert len(candidates) == 77
 
 
 def test_mtf_candidates_all_trade_m15_filtered_by_h1():
@@ -49,20 +49,28 @@ def test_the_new_trend_rule_sets_are_single_timeframe_only_not_mtf_entries():
     assert not any(name.startswith(excluded_prefixes) for name in mtf_entry_names)
 
 
-def test_market_filtered_candidates_trade_m15_and_m5_filtered_by_dxy_on_h1():
+def test_market_filtered_candidates_trade_m15_and_m5_filtered_on_h1():
     market_filtered = [c for c in build_candidates() if isinstance(c, MarketFilteredCandidate)]
 
     assert all(c.timeframe in (Timeframe.M15, Timeframe.M5) for c in market_filtered)
     assert all(c.filter_timeframe == Timeframe.H1 for c in market_filtered)
-    assert all(c.reference_market == "DXY" for c in market_filtered)
-    assert all(c.relationship == "inverse" for c in market_filtered)
 
 
-def test_market_filtered_candidates_cover_exactly_the_six_trend_rule_sets():
+def test_dxy_market_filtered_candidates_are_inverse():
+    dxy = [c for c in build_candidates() if isinstance(c, MarketFilteredCandidate) and c.reference_market == "DXY"]
+    assert len(dxy) == 12
+    assert all(c.relationship == "inverse" for c in dxy)
+
+
+def test_silver_market_filtered_candidates_are_same_direction():
+    silver = [c for c in build_candidates() if isinstance(c, MarketFilteredCandidate) and c.reference_market == "XAGUSD"]
+    assert len(silver) == 12
+    assert all(c.relationship == "same" for c in silver)
+
+
+def test_market_filtered_candidates_cover_exactly_the_six_trend_rule_sets_for_every_reference_market():
     market_filtered = [c for c in build_candidates() if isinstance(c, MarketFilteredCandidate)]
-    entry_names = {c.entry_strategy.name for c in market_filtered}
-
-    assert entry_names == {
+    expected_names = {
         "ma_crossover_20_50",
         "macd_12_26_9",
         "atr_channel_breakout_20_14_2.0",
@@ -70,6 +78,9 @@ def test_market_filtered_candidates_cover_exactly_the_six_trend_rule_sets():
         "supertrend_10_3.0",
         "adx_dmi_14",
     }
+    for market in ("DXY", "XAGUSD"):
+        entry_names = {c.entry_strategy.name for c in market_filtered if c.reference_market == market}
+        assert entry_names == expected_names
 
 
 def test_market_filtered_candidates_are_unique_per_name_and_timeframe():

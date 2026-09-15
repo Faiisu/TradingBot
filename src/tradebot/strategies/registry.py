@@ -75,6 +75,7 @@ MARKET_FILTER_TIMEFRAME = Timeframe.H1
 # "same": a rising Reference Market allows only long ones.
 REFERENCE_MARKETS: dict[str, ReferenceMarketConfig] = {
     "DXY": ReferenceMarketConfig(symbol="DXYm", relationship="inverse"),
+    "XAGUSD": ReferenceMarketConfig(symbol="XAGUSDm", relationship="same"),
 }
 
 

@@ -40,7 +40,7 @@ def run(force: bool = False) -> None:
         # Reference Markets (Market Filters): only MARKET_FILTER_TIMEFRAME (H1) is needed, not every
         # Timeframe gold trades on — mirrors how an MTF Trend Filter only reads its higher Timeframe.
         for market, config in REFERENCE_MARKETS.items():
-            print(f"Fetching Reference Market {market} ({config['symbol']})...")
+            print(f"Fetching Reference Market {market} ({config.symbol})...")
             load_ohlcv(
                 MARKET_FILTER_TIMEFRAME,
                 mt5_api=mt5,
