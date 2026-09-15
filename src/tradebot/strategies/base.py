@@ -60,15 +60,31 @@ def candidate_rule_set_key(candidate: StrategyCandidate) -> tuple[str, str]:
     return (base.name, candidate.timeframe.value)
 
 
+def match_backward(data_index: pd.DatetimeIndex, data_values, entry_index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Shared merge_asof plumbing: for each entry bar, find the most recent (data_index, data_values)
+    pair at-or-before its own timestamp, never a future one. Returns the merge_asof result (columns
+    "time" — entry_index, normalized — and "value" — the matched payload, NaN/NaT before the first
+    data point). Used by align_htf_signal (the payload is the htf signal value itself) and
+    market_filter.py's staleness age computation (the payload is the data point's own timestamp, so
+    the caller can measure how old the match is) — two different questions asked of the same match.
+
+    Real data sources can disagree on datetime64 *resolution* (MT5's OHLCV index, built from int64
+    seconds, typically lands on [s]/[ms]; a parquet round-trip of FRED data, like real_yield.py's,
+    lands on [us]) even though every value is still whole seconds — pandas' merge_asof refuses to
+    match keys of different resolutions outright, so both sides are normalized to a common one first."""
+    data_time = pd.DatetimeIndex(data_index).astype("datetime64[ns]").to_numpy()
+    order = np.argsort(data_time)
+    data_df = pd.DataFrame({"time": data_time[order], "value": np.asarray(data_values)[order]})
+    entry_df = pd.DataFrame({"time": pd.DatetimeIndex(entry_index).astype("datetime64[ns]")})
+    return pd.merge_asof(entry_df, data_df, on="time", direction="backward")
+
+
 def align_htf_signal(htf_signal: pd.Series, entry_index: pd.DatetimeIndex) -> pd.Series:
     """Aligns a higher-timeframe signal onto a lower-timeframe (entry) index without look-ahead: each
     entry bar gets the most recent htf_signal value at-or-before its own timestamp, never a future one.
     Entry bars before the first htf bar closes get NaN (no filter opinion yet)."""
-    htf_sorted = htf_signal.sort_index()
-    htf_df = pd.DataFrame({"time": htf_sorted.index, "htf": htf_sorted.to_numpy()})
-    entry_df = pd.DataFrame({"time": entry_index})
-    merged = pd.merge_asof(entry_df, htf_df, on="time", direction="backward")
-    return merged.set_index("time")["htf"]
+    merged = match_backward(htf_signal.index, htf_signal.to_numpy(), entry_index)
+    return pd.Series(merged["value"].to_numpy(), index=entry_index, name="htf")
 
 
 def _stateful_breakout_signals(

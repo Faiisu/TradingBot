@@ -142,6 +142,18 @@
 
   // ---------- session data ----------
 
+  function renderStaleDataDetail(members) {
+    const heldBack = members.filter((m) => m.held_back_by_stale_data);
+    $('stale-data-detail').hidden = heldBack.length === 0;
+    if (heldBack.length === 0) return;
+
+    const age = heldBack[0].stale_data_age_business_days;
+    const names = heldBack.map((m) => `${ruleSetLabel(m.candidate_name)} (${m.timeframe})`).join(', ');
+    $('stale-data-detail').innerHTML =
+      `<span class="pill bad">Stale data</span> a Market Filter's Reference Market data is ${num(age, 0)} business days old — ` +
+      `holding back new entries for: ${esc(names)}`;
+  }
+
   function renderUpdated(data) {
     if (!data.updated_at) {
       $('updated').textContent = 'No paper trading state yet';
@@ -175,14 +187,18 @@
       .join('');
 
     renderChart(data);
+    renderStaleDataDetail(members);
 
     $('members').innerHTML = members
       .map((m) => {
         const p = m.position;
         const call = !p ? '<span class="call flat">FLAT</span>' : `<span class="call ${p.direction === 1 ? 'long' : 'short'}">${p.direction === 1 ? 'LONG' : 'SHORT'}</span>`;
         const unrealized = p && p.unrealized_pct !== null ? `<span class="${signClass(p.unrealized_pct)}">${pct(p.unrealized_pct, 3)}</span>` : '<span class="muted">—</span>';
+        const staleBadge = m.held_back_by_stale_data
+          ? ` <span class="pill bad" title="Its Market Filter's Reference Market data is ${num(m.stale_data_age_business_days, 0)} business days old — no new trades until fresh data arrives">Stale data</span>`
+          : '';
         return `<tr>
-          <td><div>${esc(ruleSetLabel(m.candidate_name))}</div><div class="muted num" style="font-size:11px">${esc(m.candidate_name)}</div></td>
+          <td><div>${esc(ruleSetLabel(m.candidate_name))}${staleBadge}</div><div class="muted num" style="font-size:11px">${esc(m.candidate_name)}</div></td>
           <td><span class="chip">${esc(m.timeframe)}</span></td>
           <td class="num r">$${num(m.equity)}</td>
           <td class="num r ${signClass(m.return_pct)}">${pct(m.return_pct)}</td>

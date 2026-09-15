@@ -40,6 +40,23 @@ def test_align_htf_signal_is_nan_before_the_first_htf_bar():
     assert aligned.isna().all()
 
 
+def test_align_htf_signal_tolerates_mismatched_datetime64_resolutions():
+    """Real (not synthetic-test) data can arrive at different datetime64 resolutions — MT5's OHLCV
+    index is built from int64 seconds (typically resolves to [s] or [ms]), while a parquet round-trip
+    of FRED's real-yield data (real_yield.py) resolves to [us]. pandas 3's merge_asof refuses to match
+    keys of different resolutions outright — this reproduces that exact failure, first hit running
+    ticket 09's real yield Market Filter against real cached data, not caught by any synthetic test
+    until this one (every other test here happens to use pd.date_range/pd.DatetimeIndex, which produce
+    matching resolutions on both sides by coincidence)."""
+    htf_index = pd.DatetimeIndex(["2024-01-01 00:00", "2024-01-01 01:00"]).astype("datetime64[ms]")
+    htf_signal = pd.Series([1.0, -1.0], index=htf_index)
+    entry_index = pd.DatetimeIndex(["2024-01-01 00:30", "2024-01-01 01:30"]).astype("datetime64[us]")
+
+    aligned = align_htf_signal(htf_signal, entry_index)
+
+    assert aligned.tolist() == [1.0, -1.0]
+
+
 def _ohlcv_from_close(close: np.ndarray, freq: str = "h") -> pd.DataFrame:
     index = pd.date_range("2024-01-01", periods=len(close), freq=freq)
     return pd.DataFrame({"open": close, "high": close + 0.5, "low": close - 0.5, "close": close}, index=index)

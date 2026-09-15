@@ -2,9 +2,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from tradebot.dashboard.state import build_state, write_state
+from tradebot.data.real_yield import refresh_real_yield_cache
 from tradebot.indicators import atr
 from tradebot.paper.simulated_broker import SimulatedBroker
 from tradebot.strategies.base import DataRequirement, StrategyCandidate
@@ -12,6 +14,7 @@ from tradebot.strategies.registry import REFERENCE_MARKETS
 from tradebot.timeframe import TIMEFRAME_SECONDS, Timeframe, to_mt5_timeframe
 
 DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
+CACHE_DIR = DATA_DIR / "cache"
 DEFAULT_STATE_PATH = DATA_DIR / "paper_state.json"
 DEFAULT_STOP_PATH = DATA_DIR / "paper_trading.stop"
 
@@ -77,6 +80,44 @@ def wait_or_stop(seconds: float, stop_path: Path | None, poll_seconds: float = 1
         time.sleep(min(poll_seconds, remaining))
 
 
+def resolve_requirement_data(
+    mt5_api, symbol: str, requirement: DataRequirement, lookback_bars: int, fetch_csv=None
+) -> tuple[pd.DataFrame, tuple[str, int | None] | None]:
+    """One supporting-data requirement's live data, dispatched by source: the traded instrument's own
+    Timeframe or an MT5-backed Reference Market (DXY, silver) both come from fetch_recent_bars, live
+    every tick; a FRED-backed Reference Market (real yield) refreshes at most once a day and falls
+    back to its stale cache on a failed download (data/real_yield.py) rather than crashing the loop.
+    Returns (data, staleness_info); staleness_info is None except for a FRED-backed market, where it's
+    (market_name, age_in_business_days) — surfaced so the dashboard can explain why a member might be
+    holding back new entries, without duplicating MarketFilteredCandidate's own gating logic here."""
+    if requirement.reference_market is None:
+        return fetch_recent_bars(mt5_api, symbol, requirement.timeframe, lookback_bars), None
+
+    config = REFERENCE_MARKETS[requirement.reference_market]
+    if config.symbol is not None:
+        return fetch_recent_bars(mt5_api, config.symbol, requirement.timeframe, lookback_bars), None
+
+    if config.fred_series_id is not None:
+        path = CACHE_DIR / f"{requirement.reference_market}.parquet"
+        df, error = refresh_real_yield_cache(path, series_id=config.fred_series_id, fetch_csv=fetch_csv)
+        if error is not None:
+            print(
+                f"[{datetime.now(timezone.utc).isoformat()}] WARNING: {requirement.reference_market} refresh "
+                f"failed, using cached data ({error})",
+                flush=True,
+            )
+        # Wall-clock "now", not any candidate's own entry-bar timestamp — this age is for the
+        # dashboard's "is this stale right now" display (dashboard/state.py), a separate question
+        # from the per-bar age MarketFilteredCandidate computes internally to decide each signal (see
+        # market_filter.py's _age_in_business_days, which measures against the entry bar's own time).
+        # The two would only disagree by the sub-tick delay between fetching here and generate_signals
+        # running moments later — immaterial next to a 3-business-day threshold.
+        age = None if df.empty else int(np.busday_count(df.index.max().date(), datetime.now(timezone.utc).date()))
+        return df, (requirement.reference_market, age)
+
+    raise ValueError(f"Reference Market {requirement.reference_market!r} has neither an MT5 symbol nor a FRED series id configured")
+
+
 def update_member(
     mt5_api,
     symbol: str,
@@ -84,24 +125,32 @@ def update_member(
     broker: SimulatedBroker,
     lookback_bars: int,
     last_bar_time: pd.Timestamp | None,
-) -> tuple[bool, pd.Timestamp | None, float | None]:
-    """Feeds the member its latest closed bar. Returns (processed, bar_time, last_close). A bar that was
-    already processed is skipped — while the market is closed MT5 keeps returning the same final bar, and
-    replaying it could re-trigger a stop-out and re-entry on stale prices."""
+    fetch_csv=None,
+) -> tuple[bool, pd.Timestamp | None, float | None, dict[str, int]]:
+    """Feeds the member its latest closed bar. Returns (processed, bar_time, last_close,
+    reference_market_ages) — the last element names, for every FRED-backed Reference Market this
+    candidate's requirements touched, how many business days old its latest usable value is. A bar
+    that was already processed is skipped — while the market is closed MT5 keeps returning the same
+    final bar, and replaying it could re-trigger a stop-out and re-entry on stale prices."""
     recent = fetch_recent_bars(mt5_api, symbol, candidate.timeframe, lookback_bars)
     if recent.empty:
-        return False, last_bar_time, None
+        return False, last_bar_time, None, {}
     bar_time = recent.index[-1]
     if last_bar_time is not None and bar_time <= last_bar_time:
-        return False, last_bar_time, None
+        return False, last_bar_time, None, {}
 
     supporting: dict[DataRequirement, pd.DataFrame] = {}
+    reference_market_ages: dict[str, int] = {}
     for requirement in getattr(candidate, "supporting_data", ()):
-        requirement_symbol = symbol if requirement.reference_market is None else REFERENCE_MARKETS[requirement.reference_market].symbol
-        supporting[requirement] = fetch_recent_bars(mt5_api, requirement_symbol, requirement.timeframe, lookback_bars)
+        data, staleness_info = resolve_requirement_data(mt5_api, symbol, requirement, lookback_bars, fetch_csv=fetch_csv)
+        supporting[requirement] = data
+        if staleness_info is not None:
+            market, age = staleness_info
+            if age is not None:
+                reference_market_ages[market] = age
 
     last_close = decide_and_update(candidate, broker, recent, supporting)
-    return True, bar_time, last_close
+    return True, bar_time, last_close, reference_market_ages
 
 
 def run_paper_trading_loop(
@@ -134,12 +183,15 @@ def run_paper_trading_loop(
     recent_trades: list[dict] = []
     last_close_by_member: dict[str, float] = {}
     last_bar_time_by_member: dict[str, pd.Timestamp] = {}
+    reference_market_age_business_days: dict[str, int] = {}
 
     def save_state() -> None:
         equity_history.append(
             {"time": datetime.now(timezone.utc).isoformat(), "equity": sum(broker.equity for _, broker in members)}
         )
-        state = build_state(members, equity_history, recent_trades, last_close_by_member, session_started_at)
+        state = build_state(
+            members, equity_history, recent_trades, last_close_by_member, session_started_at, reference_market_age_business_days
+        )
         write_state(state, state_path)
 
     save_state()
@@ -159,13 +211,14 @@ def run_paper_trading_loop(
                     continue
                 key = member_key(candidate)
                 trades_before = len(broker.trades)
-                processed, bar_time, last_close = update_member(
+                processed, bar_time, last_close, reference_market_ages = update_member(
                     mt5_api, symbol, candidate, broker, lookback_bars, last_bar_time_by_member.get(key)
                 )
                 if not processed:
                     print(f"[{datetime.now(timezone.utc).isoformat()}] {key}: no new closed bar, skipped", flush=True)
                     continue
                 last_bar_time_by_member[key] = bar_time
+                reference_market_age_business_days.update(reference_market_ages)
                 if last_close is not None:
                     last_close_by_member[key] = last_close
                 if len(broker.trades) > trades_before:

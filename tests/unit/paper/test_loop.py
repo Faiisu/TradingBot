@@ -105,13 +105,13 @@ def test_update_member_skips_a_bar_it_already_processed():
     broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
     candidate = _AlwaysLongStrategy()
 
-    processed, bar_time, last_close = update_member(fake, "XAUUSD", candidate, broker, 40, last_bar_time=None)
+    processed, bar_time, last_close, _ = update_member(fake, "XAUUSD", candidate, broker, 40, last_bar_time=None)
     assert processed is True
     assert last_close is not None
     position_after_first = broker.position
 
     # market closed: MT5 keeps returning the same final bar
-    processed_again, bar_time_again, _ = update_member(fake, "XAUUSD", candidate, broker, 40, last_bar_time=bar_time)
+    processed_again, bar_time_again, _, _ = update_member(fake, "XAUUSD", candidate, broker, 40, last_bar_time=bar_time)
     assert processed_again is False
     assert bar_time_again == bar_time
     assert broker.position is position_after_first
@@ -153,7 +153,7 @@ def test_update_member_fetches_and_passes_through_declared_supporting_data():
     candidate = _RecordingMtfLikeCandidate()
     broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
 
-    processed, _, _ = update_member(fake, "XAUUSD", candidate, broker, 40, last_bar_time=None)
+    processed, _, _, _ = update_member(fake, "XAUUSD", candidate, broker, 40, last_bar_time=None)
 
     assert processed is True
     assert candidate.seen_supporting is not None
@@ -194,7 +194,7 @@ def test_update_member_fetches_a_reference_market_requirement_from_its_own_symbo
     candidate = _MarketFilteredLikeCandidate()
     broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
 
-    processed, _, _ = update_member(fake, "XAUUSDm", candidate, broker, 40, last_bar_time=None)
+    processed, _, _, _ = update_member(fake, "XAUUSDm", candidate, broker, 40, last_bar_time=None)
 
     assert processed is True
     key = DataRequirement(timeframe=Timeframe.H1, reference_market="DXY")
@@ -202,6 +202,65 @@ def test_update_member_fetches_a_reference_market_requirement_from_its_own_symbo
     assert not candidate.seen_supporting[key].empty
     assert "XAUUSDm" in fake.symbols_requested  # the candidate's own entry bars
     assert "DXYm" in fake.symbols_requested  # DXY's own bars, not XAUUSDm again
+
+
+def test_update_member_refreshes_a_fred_backed_reference_market_instead_of_fetching_it_from_mt5(tmp_path, monkeypatch):
+    """A real-yield-filtered candidate's DataRequirement names "REAL_YIELD", which registry.py's
+    REFERENCE_MARKETS configures with a fred_series_id, not an MT5 symbol — update_member must refresh
+    the FRED-backed cache (data/real_yield.py) instead of calling MT5 with a None symbol."""
+    import tradebot.paper.loop as loop_module
+
+    monkeypatch.setattr(loop_module, "CACHE_DIR", tmp_path)
+
+    class _RealYieldFilteredLikeCandidate:
+        name = "real_yield_filtered_like"
+        timeframe = Timeframe.M15
+        supporting_data = (DataRequirement(timeframe=Timeframe.H1, reference_market="REAL_YIELD"),)
+        reference_market = "REAL_YIELD"
+        max_staleness_business_days = 3
+
+        def __init__(self):
+            self.seen_supporting = None
+
+        def generate_signals(self, ohlcv, supporting=None):
+            self.seen_supporting = supporting
+            return pd.Series(1.0, index=ohlcv.index)
+
+    fake = _FakeMt5()
+    candidate = _RealYieldFilteredLikeCandidate()
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
+
+    csv_text = "observation_date,DFII10\n2024-01-02,1.50\n"
+    processed, _, _, reference_market_ages = update_member(
+        fake, "XAUUSDm", candidate, broker, 40, last_bar_time=None, fetch_csv=lambda: csv_text
+    )
+
+    assert processed is True
+    key = DataRequirement(timeframe=Timeframe.H1, reference_market="REAL_YIELD")
+    assert key in candidate.seen_supporting
+    assert not candidate.seen_supporting[key].empty
+    assert "REAL_YIELD" in reference_market_ages
+    assert isinstance(reference_market_ages["REAL_YIELD"], int)
+
+
+def test_update_member_reports_reference_market_ages_only_for_staleness_tracked_markets():
+    """DXY has no max_staleness_business_days (sourced live from MT5 every tick) — update_member must
+    not report an age for it, since nothing on the dashboard needs to explain DXY as "stale"."""
+
+    class _DxyFilteredLikeCandidate:
+        name = "dxy_filtered_like"
+        timeframe = Timeframe.M15
+        supporting_data = (DataRequirement(timeframe=Timeframe.H1, reference_market="DXY"),)
+
+        def generate_signals(self, ohlcv, supporting=None):
+            return pd.Series(1.0, index=ohlcv.index)
+
+    fake = _FakeMt5()
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=1.0)
+
+    _, _, _, reference_market_ages = update_member(fake, "XAUUSDm", _DxyFilteredLikeCandidate(), broker, 40, last_bar_time=None)
+
+    assert reference_market_ages == {}
 
 
 def test_fetch_recent_bars_handles_no_data():

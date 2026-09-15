@@ -14,6 +14,7 @@ from tradebot.backtest.persistence import save_backtest_results, save_walk_forwa
 from tradebot.backtest.result import BacktestResult
 from tradebot.backtest.walk_forward import run_walk_forward
 from tradebot.data.cache import load_ohlcv, trim_to_common_window
+from tradebot.data.reference_markets import load_reference_market_data
 from tradebot.ensemble.selection import save_ensemble, select_ensemble
 from tradebot.metrics.drawdown import max_drawdown_pct
 from tradebot.metrics.performance import performance_metric, total_return_pct
@@ -33,8 +34,8 @@ def run() -> None:
 
     gold_data = {DataRequirement(timeframe=tf): load_ohlcv(tf, cache_dir=CACHE_DIR) for tf in TIMEFRAMES}
     reference_market_data = {
-        DataRequirement(timeframe=MARKET_FILTER_TIMEFRAME, reference_market=market): load_ohlcv(
-            MARKET_FILTER_TIMEFRAME, symbol=config.symbol, cache_dir=CACHE_DIR
+        DataRequirement(timeframe=MARKET_FILTER_TIMEFRAME, reference_market=market): load_reference_market_data(
+            market, config, cache_dir=CACHE_DIR, market_filter_timeframe=MARKET_FILTER_TIMEFRAME
         )
         for market, config in REFERENCE_MARKETS.items()
     }

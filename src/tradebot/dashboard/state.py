@@ -13,7 +13,9 @@ def build_state(
     recent_trades: list[dict],
     last_close_by_member: dict[str, float],
     session_started_at: str | None = None,
+    reference_market_age_business_days: dict[str, int] | None = None,
 ) -> dict:
+    reference_market_age_business_days = reference_market_age_business_days or {}
     total_equity = sum(broker.equity for _, broker in members)
     total_initial = sum(broker.initial_equity for _, broker in members)
 
@@ -38,6 +40,17 @@ def build_state(
                 "stop_price": broker.position.stop_price,
                 "unrealized_pct": unrealized_pct,
             }
+        # Only a candidate whose Reference Market tracks staleness (currently just real yield's FRED
+        # publication lag — see CONTEXT.md's Market Filter entry) can ever be "held back"; DXY/silver
+        # (live from MT5 every tick) and plain candidates never carry max_staleness_business_days.
+        reference_market = getattr(candidate, "reference_market", None)
+        max_staleness = getattr(candidate, "max_staleness_business_days", None)
+        stale_data_age_business_days = None
+        held_back_by_stale_data = False
+        if reference_market is not None and max_staleness is not None:
+            stale_data_age_business_days = reference_market_age_business_days.get(reference_market)
+            held_back_by_stale_data = stale_data_age_business_days is not None and stale_data_age_business_days > max_staleness
+
         member_states.append(
             {
                 "candidate_name": candidate.name,
@@ -47,6 +60,8 @@ def build_state(
                 "return_pct": (broker.equity / broker.initial_equity - 1) * 100 if broker.initial_equity else 0.0,
                 "position": position,
                 "trade_count": len(broker.trades),
+                "held_back_by_stale_data": held_back_by_stale_data,
+                "stale_data_age_business_days": stale_data_age_business_days,
             }
         )
 

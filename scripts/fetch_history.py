@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from tradebot.data.cache import load_ohlcv
 from tradebot.data.history import ensure_bar_capacity
+from tradebot.data.reference_markets import load_reference_market_data
 from tradebot.mt5_client import mt5_session
 from tradebot.strategies.registry import MARKET_FILTER_TIMEFRAME, REFERENCE_MARKETS, TIMEFRAMES
 
@@ -39,13 +40,15 @@ def run(force: bool = False) -> None:
 
         # Reference Markets (Market Filters): only MARKET_FILTER_TIMEFRAME (H1) is needed, not every
         # Timeframe gold trades on — mirrors how an MTF Trend Filter only reads its higher Timeframe.
+        # Each market's config says whether it comes from MT5 or FRED; load_reference_market_data
+        # dispatches accordingly (mt5_api is unused for a FRED-sourced market).
         for market, config in REFERENCE_MARKETS.items():
-            print(f"Fetching Reference Market {market} ({config.symbol})...")
-            load_ohlcv(
-                MARKET_FILTER_TIMEFRAME,
-                mt5_api=mt5,
-                symbol=config.symbol,
+            load_reference_market_data(
+                market,
+                config,
                 cache_dir=CACHE_DIR,
+                market_filter_timeframe=MARKET_FILTER_TIMEFRAME,
+                mt5_api=mt5,
                 num_years=NUM_YEARS,
                 force_refresh=force,
             )

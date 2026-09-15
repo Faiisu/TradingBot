@@ -13,6 +13,14 @@ class _StubCandidate:
         self.timeframe = timeframe
 
 
+class _RealYieldFilteredStubCandidate:
+    def __init__(self, name, timeframe, max_staleness_business_days=3):
+        self.name = name
+        self.timeframe = timeframe
+        self.reference_market = "REAL_YIELD"
+        self.max_staleness_business_days = max_staleness_business_days
+
+
 def test_build_state_summarizes_members_with_no_open_positions():
     broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=100.0)
     members = [(_StubCandidate("macd_12_26_9", Timeframe.H1), broker)]
@@ -35,6 +43,48 @@ def test_build_state_computes_unrealized_pnl_for_open_positions():
     position = state["members"][0]["position"]
     assert position["direction"] == 1
     assert position["unrealized_pct"] > 0  # price moved up while long
+
+
+def test_build_state_flags_a_member_held_back_by_stale_reference_market_data():
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=100.0)
+    members = [(_RealYieldFilteredStubCandidate("macd_12_26_9_marketfilter_real_yield", Timeframe.M15), broker)]
+
+    state = build_state(
+        members, equity_history=[], recent_trades=[], last_close_by_member={}, reference_market_age_business_days={"REAL_YIELD": 5}
+    )
+
+    member = state["members"][0]
+    assert member["held_back_by_stale_data"] is True
+    assert member["stale_data_age_business_days"] == 5
+
+
+def test_build_state_does_not_flag_a_member_within_the_staleness_threshold():
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=100.0)
+    members = [(_RealYieldFilteredStubCandidate("macd_12_26_9_marketfilter_real_yield", Timeframe.M15), broker)]
+
+    state = build_state(
+        members, equity_history=[], recent_trades=[], last_close_by_member={}, reference_market_age_business_days={"REAL_YIELD": 2}
+    )
+
+    member = state["members"][0]
+    assert member["held_back_by_stale_data"] is False
+    assert member["stale_data_age_business_days"] == 2
+
+
+def test_build_state_never_flags_a_member_with_no_staleness_tracked_reference_market():
+    """A plain candidate (or one Market-Filtered by DXY/silver, which never carries
+    max_staleness_business_days) has nothing to hold back — even if some unrelated Reference Market
+    happens to be stale."""
+    broker = SimulatedBroker(risk_controls=RiskControls(), initial_equity=100.0)
+    members = [(_StubCandidate("macd_12_26_9", Timeframe.H1), broker)]
+
+    state = build_state(
+        members, equity_history=[], recent_trades=[], last_close_by_member={}, reference_market_age_business_days={"REAL_YIELD": 99}
+    )
+
+    member = state["members"][0]
+    assert member["held_back_by_stale_data"] is False
+    assert member["stale_data_age_business_days"] is None
 
 
 def test_write_and_read_state_round_trips(tmp_path):

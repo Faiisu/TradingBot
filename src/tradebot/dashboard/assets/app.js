@@ -139,7 +139,7 @@
     return candidateName;
   }
 
-  const FILTER_LABELS = { macd: 'MACD', ma_crossover: 'MA Cross', ema_slope: 'EMA slope' };
+  const FILTER_LABELS = { macd: 'MACD', ma_crossover: 'MA Cross', ema_slope: 'EMA slope', REAL_YIELD: 'Real Yield' };
   const filterLabel = (name, timeframe) => `${timeframe} ${FILTER_LABELS[name] || name} filter`;
 
   window.TB = { esc, num, pct, signClass, relativeTime, lineChart, ruleSetLabel, filterLabel };

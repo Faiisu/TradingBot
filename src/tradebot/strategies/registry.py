@@ -1,4 +1,5 @@
 import itertools
+from functools import partial
 
 from tradebot.strategies.adx_dmi import AdxDmiStrategy
 from tradebot.strategies.asian_range_breakout import AsianRangeBreakoutStrategy
@@ -8,7 +9,7 @@ from tradebot.strategies.bollinger_breakout import BollingerBreakoutStrategy
 from tradebot.strategies.donchian_breakout import DonchianBreakoutStrategy
 from tradebot.strategies.ma_crossover import MaCrossoverStrategy
 from tradebot.strategies.macd import MacdStrategy
-from tradebot.strategies.market_filter import MarketFilteredCandidate, ReferenceMarketConfig
+from tradebot.strategies.market_filter import MarketFilteredCandidate, ReferenceMarketConfig, real_yield_change_filter
 from tradebot.strategies.mtf import MtfCandidate, ema_slope_filter
 from tradebot.strategies.rsi_mean_reversion import RsiMeanReversionStrategy
 from tradebot.strategies.stochastic_reversion import StochasticReversionStrategy
@@ -72,16 +73,31 @@ MARKET_FILTER_ENTRY_TIMEFRAMES = [Timeframe.M15, Timeframe.M5]
 MARKET_FILTER_TIMEFRAME = Timeframe.H1
 
 # name -> its fixed properties. "inverse": a rising Reference Market allows only short gold entries;
-# "same": a rising Reference Market allows only long ones.
+# "same": a rising Reference Market allows only long ones. Real yield is sourced from FRED (a daily
+# series with a publication lag — see data/real_yield.py), not MT5, and needs the staleness gate that
+# DXY/silver (live from MT5 every tick) don't.
 REFERENCE_MARKETS: dict[str, ReferenceMarketConfig] = {
     "DXY": ReferenceMarketConfig(symbol="DXYm", relationship="inverse"),
     "XAGUSD": ReferenceMarketConfig(symbol="XAGUSDm", relationship="same"),
+    "REAL_YIELD": ReferenceMarketConfig(
+        fred_series_id="DFII10",
+        relationship="inverse",
+        filter_fn=partial(real_yield_change_filter, lookback=20),
+        max_staleness_business_days=3,
+    ),
 }
 
 
 def build_market_filtered_candidates() -> list[MarketFilteredCandidate]:
     return [
-        MarketFilteredCandidate(entry_cls(timeframe=entry_timeframe), ema_slope_filter, market, MARKET_FILTER_TIMEFRAME, config.relationship)
+        MarketFilteredCandidate(
+            entry_cls(timeframe=entry_timeframe),
+            config.filter_fn or ema_slope_filter,
+            market,
+            MARKET_FILTER_TIMEFRAME,
+            config.relationship,
+            max_staleness_business_days=config.max_staleness_business_days,
+        )
         for entry_cls, entry_timeframe, (market, config) in itertools.product(
             MARKET_FILTER_ENTRY_RULE_SETS, MARKET_FILTER_ENTRY_TIMEFRAMES, REFERENCE_MARKETS.items()
         )

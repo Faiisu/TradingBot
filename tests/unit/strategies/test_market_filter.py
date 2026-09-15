@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from tradebot.strategies.base import DataRequirement
-from tradebot.strategies.market_filter import MarketFilteredCandidate
+from tradebot.strategies.market_filter import MarketFilteredCandidate, real_yield_change_filter
 from tradebot.timeframe import Timeframe
 
 
@@ -127,3 +127,136 @@ def test_market_filtered_candidate_exposes_filter_name_and_timeframe_for_the_das
 
     assert candidate.filter_name == "DXY"
     assert candidate.filter_timeframe == Timeframe.H1
+
+
+def test_real_yield_change_filter_reads_the_lookback_business_day_change():
+    # one row per business day (already usable_from-indexed) — bar 20 is 1.0 higher than bar 0
+    index = pd.date_range("2024-01-01", periods=25, freq="D")
+    close = pd.Series([1.5] * 20 + [2.5] * 5, index=index)
+    df = pd.DataFrame({"close": close}, index=index)
+
+    signal = real_yield_change_filter(df, lookback=20)
+
+    assert signal.iloc[19] == 0  # still warming up: no value 20 rows back yet
+    assert signal.iloc[20] == 1  # 2.5 now vs 1.5 twenty rows back -> rising
+    assert signal.iloc[24] == 1
+
+
+def test_real_yield_change_filter_detects_falling_yields():
+    index = pd.date_range("2024-01-01", periods=25, freq="D")
+    close = pd.Series([2.5] * 20 + [1.5] * 5, index=index)
+    df = pd.DataFrame({"close": close}, index=index)
+
+    signal = real_yield_change_filter(df, lookback=20)
+
+    assert signal.iloc[20] == -1
+
+
+class _RememberingEntryStrategy:
+    """Like _StubEntryStrategy, but the fixed signal can vary bar to bar (a plain list, not one
+    constant) — needed to exercise the staleness gate's "continue only if it still agrees with the
+    already-held direction" rule, which a constant-signal stub can't distinguish from a flip."""
+
+    def __init__(self, timeframe, signal_values):
+        self.timeframe = timeframe
+        self.name = "remembering_entry"
+        self.signal_values = signal_values
+        self.supporting_data = ()
+
+    def generate_signals(self, ohlcv, supporting=None):
+        return pd.Series(self.signal_values, index=ohlcv.index)
+
+
+def test_staleness_blocks_a_fresh_entry_but_allows_continuing_the_same_direction():
+    """rule-set-expansion ticket 09's "no opinion" rule: while the Reference Market's data is stale,
+    a candidate opens no new trades, but a position already held continues as long as the entry Rule
+    Set's own signal still agrees with it. Staleness is measured in business days, so this test uses
+    daily bars spanning real calendar dates rather than an arbitrary bar count."""
+    # 2024-01-01 is a Monday. The real yield's last-ever close is 2024-01-02 (Tue).
+    market_ohlcv = _ohlcv_from_close(np.array([100.0, 101.0]), freq="D")
+    market_ohlcv.index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+
+    # Jan 1/2: fresh (0 business days old). Jan 8/9/10: stale (4+ business days old — Jan 6-7 is a
+    # weekend, so busday_count skips it, same as np.busday_count / any real business-day calendar).
+    entry_index = pd.DatetimeIndex(["2024-01-01", "2024-01-02", "2024-01-08", "2024-01-09", "2024-01-10"])
+    # bar 0: flat. bar 1: opens long while fresh. bars 2-4: entry keeps signalling long while stale.
+    entry = _RememberingEntryStrategy(Timeframe.M15, [0.0, 1.0, 1.0, 1.0, 1.0])
+    always_up_filter = lambda df: pd.Series(1.0, index=df.index)  # noqa: E731
+
+    ohlcv = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}, index=entry_index)
+    candidate = MarketFilteredCandidate(
+        entry, always_up_filter, "REAL_YIELD", Timeframe.H1, relationship="same", max_staleness_business_days=3
+    )
+    signals = candidate.generate_signals(
+        ohlcv, {DataRequirement(timeframe=Timeframe.H1, reference_market="REAL_YIELD"): market_ohlcv}
+    )
+
+    assert list(signals) == [0.0, 1.0, 1.0, 1.0, 1.0]
+
+
+def test_staleness_blocks_a_flip_to_the_opposite_direction_going_flat_instead():
+    # the real yield's one and only close, ever, is 2024-01-01 (Mon) — everything from Jan 8 onward
+    # (4+ business days later) is stale.
+    market_ohlcv = _ohlcv_from_close(np.array([100.0]), freq="D")
+    market_ohlcv.index = pd.DatetimeIndex(["2024-01-01"])
+
+    entry_index = pd.DatetimeIndex(["2024-01-01", "2024-01-08", "2024-01-09"])
+    # bar 0: long while fresh. bar 1: now stale AND the entry signal flips short -> per the
+    # "continue only same-direction, else flat" rule, this goes flat, not short — and stays flat.
+    entry = _RememberingEntryStrategy(Timeframe.M15, [1.0, -1.0, -1.0])
+    always_up_filter = lambda df: pd.Series(1.0, index=df.index)  # noqa: E731
+
+    ohlcv = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}, index=entry_index)
+    candidate = MarketFilteredCandidate(
+        entry, always_up_filter, "REAL_YIELD", Timeframe.H1, relationship="same", max_staleness_business_days=3
+    )
+    signals = candidate.generate_signals(
+        ohlcv, {DataRequirement(timeframe=Timeframe.H1, reference_market="REAL_YIELD"): market_ohlcv}
+    )
+
+    assert list(signals) == [1.0, 0.0, 0.0]  # never goes short — flat instead, and stays flat
+
+
+def test_staleness_tolerates_mismatched_datetime64_resolutions():
+    """Same root cause as test_align_htf_signal_tolerates_mismatched_datetime64_resolutions in
+    test_mtf.py, hit again in the staleness age computation specifically: a parquet round-trip of
+    real yield data resolves to a different datetime64 resolution than gold's own MT5-sourced OHLCV
+    index, and pandas 3's merge_asof refuses to match keys of different resolutions outright. Caught
+    running ticket 09's real yield Market Filter against real cached data, not by any earlier
+    same-resolution synthetic test."""
+    market_ohlcv = _ohlcv_from_close(np.array([100.0, 101.0]), freq="D")
+    market_ohlcv.index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"]).astype("datetime64[us]")
+
+    entry_index = pd.DatetimeIndex(["2024-01-02", "2024-01-08"]).astype("datetime64[ms]")
+    entry = _RememberingEntryStrategy(Timeframe.M15, [1.0, 1.0])
+    always_up_filter = lambda df: pd.Series(1.0, index=df.index)  # noqa: E731
+
+    ohlcv = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}, index=entry_index)
+    candidate = MarketFilteredCandidate(
+        entry, always_up_filter, "REAL_YIELD", Timeframe.H1, relationship="same", max_staleness_business_days=3
+    )
+    signals = candidate.generate_signals(
+        ohlcv, {DataRequirement(timeframe=Timeframe.H1, reference_market="REAL_YIELD"): market_ohlcv}
+    )
+
+    assert list(signals) == [1.0, 1.0]  # fresh, then continues while stale — no crash either way
+
+
+def test_staleness_opens_no_fresh_trade_from_flat():
+    # the real yield's only close is decades before any entry bar — always stale
+    market_ohlcv = _ohlcv_from_close(np.array([100.0]), freq="D")
+    market_ohlcv.index = pd.DatetimeIndex(["2000-01-01"])
+
+    entry_index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    entry = _RememberingEntryStrategy(Timeframe.M15, [0.0, 1.0])  # tries to open long while already stale
+    always_up_filter = lambda df: pd.Series(1.0, index=df.index)  # noqa: E731
+
+    ohlcv = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}, index=entry_index)
+    candidate = MarketFilteredCandidate(
+        entry, always_up_filter, "REAL_YIELD", Timeframe.H1, relationship="same", max_staleness_business_days=3
+    )
+    signals = candidate.generate_signals(
+        ohlcv, {DataRequirement(timeframe=Timeframe.H1, reference_market="REAL_YIELD"): market_ohlcv}
+    )
+
+    assert list(signals) == [0.0, 0.0]
